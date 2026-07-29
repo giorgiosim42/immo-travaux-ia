@@ -10,6 +10,26 @@ from calcul_devis import calculer_devis  # Assure-toi que cette fonction existe 
 from export_pdf import generer_pdf       # Assure-toi que cette fonction existe dans ton export_pdf.py
 from prompts import SYSTEM_PROMPT        # Assure-toi que SYSTEM_PROMPT est défini
 
+# Mapping des id_poste (liste fermée définie dans prompts.py) vers les catégories
+# affichées à l'utilisateur pour le filtrage post-analyse.
+CATEGORIES_TRAVAUX = {
+    "Peinture": ["peinture"],
+    "Sols": ["revetement_sol_vinyle_parquet"],
+    "Carrelage / Faïence": ["carrelage_faience"],
+    "Électricité": ["tableau_electrique", "electricite_complete"],
+    "Menuiserie": ["fenetre_pvc"],
+    "Plomberie": ["wc_remplacement", "douche_renovation", "meuble_vasque", "chauffe_eau"],
+    "Autres": ["cloison_placo", "cuisine_equipee"],
+}
+
+
+def get_categorie(id_poste):
+    """Retourne le nom de la catégorie associée à un id_poste (Autres si non trouvé)."""
+    for categorie, ids in CATEGORIES_TRAVAUX.items():
+        if id_poste in ids:
+            return categorie
+    return "Autres"
+
 st.set_page_config(page_title="IA Immo - Estimation Travaux", page_icon="🏗️", layout="wide")
 
 st.title("🏗️ Estimation IA de Travaux Immo")
@@ -246,6 +266,35 @@ if st.session_state.get("analyse_effectuee"):
         st.error("❌ Données d'analyse invalides. Cliquez sur '🔄 Nouvelle analyse' pour relancer.")
         st.stop()
 
+    # --- Filtre par type de travaux ---
+    st.markdown("### 🧰 Types de travaux à inclure dans le devis")
+    categories_presentes = sorted(
+        {get_categorie(p.get("id_poste", "")) for p in raw_postes},
+        key=lambda c: list(CATEGORIES_TRAVAUX.keys()).index(c) if c in CATEGORIES_TRAVAUX else 99
+    )
+
+    categories_selectionnees = st.multiselect(
+        "Décochez les catégories que vous ne souhaitez pas inclure :",
+        options=categories_presentes,
+        default=categories_presentes,
+        help="Seuls les postes détectés par l'IA appartenant aux catégories cochées apparaîtront dans le devis."
+    )
+
+    raw_postes_filtres = [
+        p for p in raw_postes
+        if get_categorie(p.get("id_poste", "")) in categories_selectionnees
+    ]
+
+    nb_exclus = len(raw_postes) - len(raw_postes_filtres)
+    if nb_exclus > 0:
+        st.caption(f"ℹ️ {nb_exclus} poste(s) exclu(s) du devis suite au filtre par catégorie.")
+
+    if not raw_postes_filtres:
+        st.warning("⚠️ Aucun poste à afficher : sélectionnez au moins une catégorie de travaux ci-dessus.")
+        st.stop()
+
+    raw_postes = raw_postes_filtres
+
     rows = []
 
     # Dictionnaire plat pour retrouver les prix unitaires
@@ -269,6 +318,7 @@ if st.session_state.get("analyse_effectuee"):
         pu = prix_dict.get(p_id, 0)
         qte = p.get("quantite_estimee", 1.0)
         rows.append({
+            "Catégorie": get_categorie(p_id),
             "ID Poste": p_id,
             "Description": p.get("explication", ""),
             "Quantité": float(qte),
@@ -282,6 +332,7 @@ if st.session_state.get("analyse_effectuee"):
         df_initial,
         num_rows="dynamic",  # Permet d'ajouter/supprimer des lignes
         column_config={
+            "Catégorie": st.column_config.TextColumn("Catégorie", disabled=True),
             "ID Poste": st.column_config.TextColumn("Identifiant", disabled=True),
             "Quantité": st.column_config.NumberColumn("Quantité", min_value=0.0, step=0.5, format="%.1f"),
             "Prix Unitaire HT (€)": st.column_config.NumberColumn("Prix U. (€ HT)", min_value=0.0, format="%.2f €"),
