@@ -1,0 +1,186 @@
+{
+    "metadata": {
+        "projet": "Base de prix travaux - Estimation IA Immo",
+        "version": "1.0",
+        "devise": "EUR",
+        "taxes": "HT (Hors Taxes)",
+        "marge_securite_defaut_pct": 10
+    },
+    "coefficients": {
+        "localisation": {
+            "ile_de_france": {
+                "label": "Île-de-France / Paris",
+                "coefficient": 1.2
+            },
+            "grandes_metropoles": {
+                "label": "Grandes Métropoles (Lyon, Marseille, Bordeaux, Lille...)",
+                "coefficient": 1.15
+            },
+            "villes_moyennes_rural": {
+                "label": "Villes moyennes / Zones rurales",
+                "coefficient": 1.0
+            }
+        },
+        "etat_bien": {
+            "rafraichissement": {
+                "label": "Rafraîchissement léger (peinture, sols)",
+                "coefficient": 1.0
+            },
+            "renovation_moyenne": {
+                "label": "Rénovation moyenne (électricité partielle, cuisine/SDB)",
+                "coefficient": 1.15
+            },
+            "renovation_lourde": {
+                "label": "Rénovation lourde / Démolition / Structure",
+                "coefficient": 1.3
+            }
+        }
+    },
+    "categories_travaux": [
+        {
+            "id": "sols_murs",
+            "nom": "Sols & Murs",
+            "postes": [
+                {
+                    "id": "peinture",
+                    "nom": "Peinture (Lavage + sous-couche + 2 couches)",
+                    "unite": "m2_surface_mur",
+                    "prix_eco_ht": 25,
+                    "prix_standard_ht": 40,
+                    "prix_premium_ht": 60,
+                    "description": "Préparation des supports, ponçage, impression et 2 couches de finition matte ou satinée."
+                },
+                {
+                    "id": "revetement_sol_vinyle_parquet",
+                    "nom": "Revêtement Sol (Lame vinyle / Stratifié)",
+                    "unite": "m2_surface_sol",
+                    "prix_eco_ht": 30,
+                    "prix_standard_ht": 55,
+                    "prix_premium_ht": 90,
+                    "description": "Fourniture et pose flottante avec sous-couche acoustique et plinthes."
+                },
+                {
+                    "id": "carrelage_faience",
+                    "nom": "Carrelage / Faïence",
+                    "unite": "m2_surface_sol_mur",
+                    "prix_eco_ht": 45,
+                    "prix_standard_ht": 80,
+                    "prix_premium_ht": 130,
+                    "description": "Fourniture, colle, pose et réalisation des joints."
+                },
+                {
+                    "id": "cloison_placo",
+                    "nom": "Création cloison Placo (avec isolation)",
+                    "unite": "m2",
+                    "prix_eco_ht": 50,
+                    "prix_standard_ht": 75,
+                    "prix_premium_ht": 100,
+                    "description": "Ossature métallique, laine de verre/roche, plaques BA13, bandes et enduit."
+                }
+            ]
+        },
+        {
+            "id": "plomberie_sanitaires",
+            "nom": "Plomberie & Sanitaires",
+            "postes": [
+                {
+                    "id": "wc_remplacement",
+                    "nom": "Remplacement WC",
+                    "unite": "unite",
+                    "prix_eco_ht": 250,
+                    "prix_standard_ht": 450,
+                    "prix_premium_ht": 800,
+                    "description": "Dépose de l'existant, fourniture et pose d'un WC à poser (Éco) ou suspendu Geberit (Standard/Premium)."
+                },
+                {
+                    "id": "douche_renovation",
+                    "nom": "Rénovation Douche complète",
+                    "unite": "unite",
+                    "prix_eco_ht": 800,
+                    "prix_standard_ht": 1500,
+                    "prix_premium_ht": 2800,
+                    "description": "Receveur extra-plat ou italienne, paroi vitrée, colonne de douche thermostatique et raccordements."
+                },
+                {
+                    "id": "meuble_vasque",
+                    "nom": "Remplacement Meuble Vasque + Robinetterie",
+                    "unite": "unite",
+                    "prix_eco_ht": 300,
+                    "prix_standard_ht": 600,
+                    "prix_premium_ht": 1200,
+                    "description": "Meuble sous-vasque, vasque, mitigeur, miroir et raccordements évacuation/eau."
+                },
+                {
+                    "id": "chauffe_eau",
+                    "nom": "Remplacement Chauffe-eau (200L)",
+                    "unite": "unite",
+                    "prix_eco_ht": 600,
+                    "prix_standard_ht": 1000,
+                    "prix_premium_ht": 1600,
+                    "description": "Dépose, fourniture et pose d'un ballon électrique blindé (Éco), stéatite (Standard) ou thermodynamique (Premium)."
+                }
+            ]
+        },
+        {
+            "id": "electricite",
+            "nom": "Électricité",
+            "postes": [
+                {
+                    "id": "tableau_electrique",
+                    "nom": "Remise aux normes Tableau Électrique",
+                    "unite": "unite",
+                    "prix_eco_ht": 800,
+                    "prix_standard_ht": 1300,
+                    "prix_premium_ht": 2000,
+                    "description": "Remplacement du tableau, disjoncteurs différentiels 30mA, étiquetage et mise à la terre."
+                },
+                {
+                    "id": "electricite_complete",
+                    "nom": "Rénovation Électrique complète",
+                    "unite": "m2_surface_au_sol",
+                    "prix_eco_ht": 90,
+                    "prix_standard_ht": 130,
+                    "prix_premium_ht": 180,
+                    "description": "Saignées, réseau encastré, appareillages (prises, interrupteurs), points lumineux et consuel."
+                }
+            ]
+        },
+        {
+            "id": "cuisine_menuiserie",
+            "nom": "Cuisine & Menuiseries",
+            "postes": [
+                {
+                    "id": "cuisine_equipee",
+                    "nom": "Cuisine équipée (Meubles + pose, hors électro)",
+                    "unite": "forfait",
+                    "prix_eco_ht": 1500,
+                    "prix_standard_ht": 4000,
+                    "prix_premium_ht": 9000,
+                    "description": "Caissons, façades, plan de travail, évier, robinetterie et installation."
+                },
+                {
+                    "id": "fenetre_pvc",
+                    "nom": "Remplacement Fenêtre (Double vitrage PVC)",
+                    "unite": "unite",
+                    "prix_eco_ht": 400,
+                    "prix_standard_ht": 700,
+                    "prix_premium_ht": 1100,
+                    "description": "Dépose de l'ancienne fenêtre, fourniture et pose fenêtre PVC oscillobattante double vitrage."
+                }
+            ]
+        },
+        {
+            "id": "securite_imponderables",
+            "nom": "Marge de Sécurité & Impondérables",
+            "postes": [
+                {
+                    "id": "imponderables_reserve",
+                    "nom": "Impondérables / Marge de sécurité",
+                    "unite": "pourcentage_sous_total",
+                    "valeur_pct": 10,
+                    "description": "Réserves obligatoires pour imprévus de chantier (vice caché, amiante, surcoût structurel, adaptation terrain)."
+                }
+            ]
+        }
+    ]
+}
