@@ -105,7 +105,7 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
 
             from prompts import SYSTEM_PROMPT  # Assure-toi que SYSTEM_PROMPT est défini
             response = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-3-5-sonnet-20240620",
                 max_tokens=1500,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt_content}]
