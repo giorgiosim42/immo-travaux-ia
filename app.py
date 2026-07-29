@@ -2,16 +2,41 @@ import streamlit as st
 import pandas as pd
 import json
 import os
+import base64
+import io
+from PIL import Image
 from anthropic import Anthropic
 from calcul_devis import calculer_devis  # Assure-toi que cette fonction existe dans ton calcul_devis.py
 from export_pdf import generer_pdf       # Assure-toi que cette fonction existe dans ton export_pdf.py
+from prompts import SYSTEM_PROMPT        # Assure-toi que SYSTEM_PROMPT est défini
 
 st.set_page_config(page_title="IA Immo - Estimation Travaux", page_icon="🏗️", layout="wide")
 
 st.title("🏗️ Estimation IA de Travaux Immo")
 st.markdown("Téléversez les photos d'une pièce et obtenez une estimation financière détaillée et ajustable.")
 
-# --- BARRE LIATÉRALE : PARAMÈTRES ET COEFFICIENTS ---
+
+# --- FONCTIONS UTILITAIRES ---
+
+def compress_image(file, max_size=1568, quality=85):
+    """Redimensionne et compresse une image avant envoi à l'API (réduit coûts et payload)."""
+    img = Image.open(file)
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+    img.thumbnail((max_size, max_size))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
+@st.cache_data
+def charger_base_prix():
+    """Charge la base de prix une seule fois (mise en cache)."""
+    with open("base_prix_travaux.json", "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+# --- BARRE LATÉRALE : PARAMÈTRES ET COEFFICIENTS ---
 st.sidebar.header("⚙️ Paramètres du projet")
 
 localisation = st.sidebar.selectbox(
@@ -41,7 +66,6 @@ gamme_prix = st.sidebar.select_slider(
     format_func=lambda x: x.capitalize()
 )
 
-# 💡 NOUVEAU : Curseur pour la marge d'impondérables dynamique
 marge_pct = st.sidebar.slider(
     "Marge d'impondérables / Sécurité (%)",
     min_value=5,
@@ -67,81 +91,149 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
+    if len(uploaded_files) > 5:
+        st.warning("⚠️ Merci de limiter à 5 photos maximum. Seules les 5 premières seront analysées.")
+        uploaded_files = uploaded_files[:5]
+
     cols = st.columns(len(uploaded_files))
     for idx, file in enumerate(uploaded_files):
-        cols[idx].image(file, caption=f"Photo {idx+1}", use_column_width=True)
+        cols[idx].image(file, caption=f"Photo {idx + 1}", use_column_width=True)
 
 # --- BOUTON DE GÉNÉRATION ET ANALYSE ---
 if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_files):
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = st.secrets.get("ANTHROPIC_API_KEY") if hasattr(st, "secrets") else None
+    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+
     if not api_key:
-        st.error("❌ Clé API Anthropic manquante dans les Secrets Streamlit.")
+        st.error("❌ Clé API Anthropic manquante. Ajoutez-la dans les Secrets Streamlit (ANTHROPIC_API_KEY).")
         st.stop()
 
-    with st.spinner("Analyse des images par Claude 3.5 Sonnet..."):
-        try:
-            # Appel API Anthropic
-            client = Anthropic(api_key=api_key)
-            
-            # --- Préparation des images pour l'API ---
-            import base64
-            images_payload = []
-            for file in uploaded_files:
-                file.seek(0)
-                base64_image = base64.b64encode(file.read()).decode('utf-8')
-                images_payload.append({
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": file.type,
-                        "data": base64_image
-                    }
-                })
+    # Réinitialise l'état avant une nouvelle tentative
+    st.session_state["analyse_effectuee"] = False
 
-            prompt_content = images_payload + [{
-                "type": "text",
-                "text": f"Analyse ces photos pour une pièce de {surface_piece} m2. Retourne un JSON structuré avec la liste des travaux nécessaires en utilisant uniquement les IDs valides."
-            }]
+    progress_bar = st.progress(0, text="Préparation des images...")
 
-            from prompts import SYSTEM_PROMPT  # Assure-toi que SYSTEM_PROMPT est défini
-            response = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=1500,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt_content}]
+    try:
+        client = Anthropic(api_key=api_key)
+
+        # --- Compression + encodage des images ---
+        images_payload = []
+        for idx, file in enumerate(uploaded_files):
+            file.seek(0)
+            compressed_bytes = compress_image(file)
+            base64_image = base64.b64encode(compressed_bytes).decode("utf-8")
+            images_payload.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",  # toujours JPEG après compression
+                    "data": base64_image
+                }
+            })
+            progress_bar.progress(
+                (idx + 1) / len(uploaded_files),
+                text=f"Photo {idx + 1}/{len(uploaded_files)} préparée..."
             )
 
-            # Extraire le JSON de la réponse
-            response_text = response.content[0].text
-            clean_json = response_text.replace("```json", "").replace("```", "").strip()
-            data_ia = json.loads(clean_json)
+        prompt_content = images_payload + [{
+            "type": "text",
+            "text": f"Analyse ces photos pour une pièce de {surface_piece} m2. "
+                    f"Retourne un JSON structuré avec la liste des travaux nécessaires "
+                    f"en utilisant uniquement les IDs valides."
+        }]
 
-            # Stocker les résultats bruts dans la session
-            st.session_state["data_ia"] = data_ia["postes_detectes"]
-            st.session_state["analyse_effectuee"] = True
+        progress_bar.progress(1.0, text="Analyse par Claude en cours...")
 
-        except Exception as e:
-            st.error(f"Erreur lors de l'analyse IA : {e}")
+        response = client.messages.create(
+            model="claude-sonnet-5",
+            max_tokens=3000,
+            system=SYSTEM_PROMPT,
+            tools=[{
+                "name": "retour_analyse",
+                "description": "Retourne la liste structurée des travaux détectés sur les photos.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "postes_detectes": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id_poste": {"type": "string"},
+                                    "explication": {"type": "string"},
+                                    "quantite_estimee": {"type": "number"},
+                                    "niveau_confiance": {
+                                        "type": "string",
+                                        "enum": ["Élevé", "Moyen", "Faible"]
+                                    }
+                                },
+                                "required": ["id_poste", "explication", "quantite_estimee", "niveau_confiance"]
+                            }
+                        }
+                    },
+                    "required": ["postes_detectes"]
+                }
+            }],
+            tool_choice={"type": "tool", "name": "retour_analyse"},
+            messages=[{"role": "user", "content": prompt_content}]
+        )
+
+        # Récupération directe du JSON structuré (plus de parsing texte fragile)
+        tool_use_block = next(b for b in response.content if b.type == "tool_use")
+        data_ia = tool_use_block.input
+
+        if not data_ia.get("postes_detectes"):
+            st.warning("⚠️ Aucun poste de travaux détecté sur ces photos. Essayez avec d'autres images.")
+            st.stop()
+
+        st.session_state["data_ia"] = data_ia["postes_detectes"]
+        st.session_state["analyse_effectuee"] = True
+        progress_bar.empty()
+
+    except StopIteration:
+        st.error("❌ L'IA n'a pas retourné de résultat structuré. Réessayez.")
+    except json.JSONDecodeError:
+        st.error("❌ La réponse de l'IA n'a pas pu être interprétée. Réessayez.")
+    except Exception as e:
+        error_msg = str(e)
+        if "404" in error_msg and "model" in error_msg.lower():
+            st.error("❌ Le modèle IA configuré n'existe plus ou est indisponible. "
+                      "Vérifiez le nom du modèle dans le code (ex: claude-sonnet-5).")
+        elif "401" in error_msg or "authentication" in error_msg.lower():
+            st.error("❌ Clé API invalide ou expirée. Vérifiez ANTHROPIC_API_KEY dans les Secrets.")
+        else:
+            st.error(f"❌ Erreur lors de l'analyse IA : {error_msg}")
 
 # --- AFFICHAGE ET ÉDITION DU DEVIS (SI ANALYSE DÉJÀ EFFECTUÉE) ---
 if st.session_state.get("analyse_effectuee"):
     st.markdown("---")
     st.subheader("📋 Devis Estimatif & Ajustement")
-    st.info("💡 **Astuce :** Vous pouvez modifier directement les quantites ou les descriptions dans le tableau ci-dessous !")
+    st.info("💡 **Astuce :** Vous pouvez modifier directement les quantités ou les descriptions dans le tableau ci-dessous !")
 
-    # 1. Charger la base de données JSON
-    with open("base_prix_travaux.json", "r", encoding="utf-8") as f:
-        base_prix = json.load(f)
+    if st.button("🔄 Nouvelle analyse"):
+        st.session_state["analyse_effectuee"] = False
+        st.session_state.pop("data_ia", None)
+        st.rerun()
+
+    # 1. Charger la base de données JSON (mise en cache)
+    base_prix = charger_base_prix()
 
     # 2. Préparer les données pour le Tableau Modifiable
     raw_postes = st.session_state["data_ia"]
     rows = []
-    
+
     # Dictionnaire plat pour retrouver les prix unitaires
     prix_dict = {}
     for cat in base_prix["categories_travaux"]:
         for p in cat["postes"]:
             prix_dict[p["id"]] = p.get(f"prix_{gamme_prix}_ht", 0)
+
+    postes_inconnus = [p["id_poste"] for p in raw_postes if p["id_poste"] not in prix_dict]
+    if postes_inconnus:
+        st.warning(
+            f"⚠️ {len(postes_inconnus)} poste(s) non reconnu(s) dans la base de prix "
+            f"(prix à 0€, à corriger manuellement) : {', '.join(postes_inconnus)}"
+        )
 
     for p in raw_postes:
         p_id = p["id_poste"]
@@ -157,10 +249,9 @@ if st.session_state.get("analyse_effectuee"):
 
     df_initial = pd.DataFrame(rows)
 
-    # 💡 NOUVEAU : st.data_editor rend le tableau entièrement modifiable par l'utilisateur !
     edited_df = st.data_editor(
         df_initial,
-        num_rows="dynamic", # Permet d'ajouter/supprimer des lignes
+        num_rows="dynamic",  # Permet d'ajouter/supprimer des lignes
         column_config={
             "ID Poste": st.column_config.TextColumn("Identifiant", disabled=True),
             "Quantité": st.column_config.NumberColumn("Quantité", min_value=0.0, step=0.5, format="%.1f"),
@@ -174,11 +265,9 @@ if st.session_state.get("analyse_effectuee"):
     coeff_loc = base_prix["coefficients"]["localisation"][localisation]["coefficient"]
     coeff_etat = base_prix["coefficients"]["etat_bien"][etat_bien]["coefficient"]
 
-    # Calcul du sous-total
     edited_df["Sous-Total HT (€)"] = edited_df["Quantité"] * edited_df["Prix Unitaire HT (€)"] * coeff_loc * coeff_etat
     sous_total_ht = edited_df["Sous-Total HT (€)"].sum()
-    
-    # Application du pourcentage d'impondérables configuré dans le slider
+
     montant_imponderables = sous_total_ht * (marge_pct / 100.0)
     total_general_ht = sous_total_ht + montant_imponderables
 
@@ -198,3 +287,4 @@ if st.session_state.get("analyse_effectuee"):
             file_name="devis_estimation_travaux.pdf",
             mime="application/pdf"
         )
+
