@@ -2,3 +2,4 @@ streamlit
 anthropic
 fpdf2
 pandas
+pillow
