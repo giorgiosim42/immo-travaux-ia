@@ -304,17 +304,24 @@ if st.session_state.get("analyse_effectuee"):
             f"(prix à 0€, à corriger manuellement) : {', '.join(postes_inconnus)}"
         )
 
+    # Dictionnaire plat pour retrouver l'unité de chaque poste (m², unité, forfait, ml)
+    unite_dict = {}
+    for cat in base_prix["categories_travaux"]:
+        for p in cat["postes"]:
+            unite_dict[p["id"]] = p.get("unite", "")
+
     for p in raw_postes:
         p_id = p.get("id_poste", "?")
         pu = prix_dict.get(p_id, 0)
         qte = p.get("quantite_estimee", 1.0)
         rows.append({
+            "Inclure": True,
             "Catégorie": get_categorie(p_id),
             "ID Poste": p_id,
-            "Description": p.get("explication", ""),
+            "Conseil IA": p.get("explication", ""),
+            "Unité": unite_dict.get(p_id, ""),
             "Quantité": float(qte),
             "Prix Unitaire HT (€)": float(pu),
-            "Confiance IA": p.get("niveau_confiance", "Moyen")
         })
 
     df_initial = pd.DataFrame(rows)
@@ -322,22 +329,37 @@ if st.session_state.get("analyse_effectuee"):
     edited_df = st.data_editor(
         df_initial,
         num_rows="dynamic",  # Permet d'ajouter/supprimer des lignes
+        column_order=["Inclure", "Catégorie", "ID Poste", "Conseil IA", "Unité", "Quantité", "Prix Unitaire HT (€)"],
         column_config={
-            "Catégorie": st.column_config.TextColumn("Catégorie", disabled=True),
+            "Inclure": st.column_config.CheckboxColumn(
+                "✅ Inclure", default=True,
+                help="Décochez pour exclure ce poste du devis et de la répartition par corps de métier"
+            ),
+            "Catégorie": st.column_config.SelectboxColumn(
+                "Corps de métier", options=ordre_categories, required=True,
+                help="Vous pouvez reclasser un poste dans un autre corps de métier"
+            ),
             "ID Poste": st.column_config.TextColumn("Identifiant", disabled=True),
+            "Conseil IA": st.column_config.TextColumn("Conseil IA"),
+            "Unité": st.column_config.TextColumn("Unité", disabled=True),
             "Quantité": st.column_config.NumberColumn("Quantité", min_value=0.0, step=0.5, format="%.1f"),
             "Prix Unitaire HT (€)": st.column_config.NumberColumn("Prix U. (€ HT)", min_value=0.0, format="%.2f €"),
-            "Confiance IA": st.column_config.SelectboxColumn("Confiance", options=["Élevé", "Moyen", "Faible"], disabled=True)
         },
         use_container_width=True
     )
 
-    # 3. Calculs dynamiques basés sur le tableau édité
+    # 3. Calculs dynamiques basés sur le tableau édité (seules les lignes "Inclure" cochées comptent)
     coeff_loc = base_prix["coefficients"]["localisation"][localisation]["coefficient"]
     coeff_etat = base_prix["coefficients"]["etat_bien"][etat_bien]["coefficient"]
 
     edited_df["Sous-Total HT (€)"] = edited_df["Quantité"] * edited_df["Prix Unitaire HT (€)"] * coeff_loc * coeff_etat
-    sous_total_ht = edited_df["Sous-Total HT (€)"].sum()
+
+    df_devis = edited_df[edited_df["Inclure"] == True].copy()  # noqa: E712
+    sous_total_ht = df_devis["Sous-Total HT (€)"].sum()
+
+    nb_exclus_checkbox = len(edited_df) - len(df_devis)
+    if nb_exclus_checkbox > 0:
+        st.caption(f"ℹ️ {nb_exclus_checkbox} poste(s) décoché(s), exclu(s) du calcul du devis.")
 
     montant_imponderables = sous_total_ht * (marge_pct / 100.0)
     total_general_ht = sous_total_ht + montant_imponderables
@@ -346,7 +368,7 @@ if st.session_state.get("analyse_effectuee"):
     if sous_total_ht > 0:
         st.markdown("### 🧱 Répartition par corps de métier")
         repartition = (
-            edited_df.groupby("Catégorie")["Sous-Total HT (€)"]
+            df_devis.groupby("Catégorie")["Sous-Total HT (€)"]
             .sum()
             .reset_index()
             .sort_values("Sous-Total HT (€)", ascending=False)
@@ -396,9 +418,9 @@ if st.session_state.get("analyse_effectuee"):
     c3.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "), delta=f"{marge_pct}% marge incluse")
     c4.metric("Prix au m²", f"{(total_general_ht / surface_piece):,.2f} €/m²".replace(",", " "))
 
-    # 5. Export PDF
+    # 5. Export PDF (uniquement les postes cochés "Inclure")
     if st.button("📥 Télécharger le Devis au format PDF"):
-        pdf_bytes = generer_pdf(edited_df, sous_total_ht, montant_imponderables, total_general_ht, marge_pct)
+        pdf_bytes = generer_pdf(df_devis, sous_total_ht, montant_imponderables, total_general_ht, marge_pct)
         st.download_button(
             label="Clic ici pour enregistrer le PDF",
             data=pdf_bytes,
