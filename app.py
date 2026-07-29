@@ -182,11 +182,20 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
         tool_use_block = next(b for b in response.content if b.type == "tool_use")
         data_ia = tool_use_block.input
 
-        if not data_ia.get("postes_detectes"):
+        postes = data_ia.get("postes_detectes")
+
+        if not postes:
             st.warning("⚠️ Aucun poste de travaux détecté sur ces photos. Essayez avec d'autres images.")
             st.stop()
 
-        st.session_state["data_ia"] = data_ia["postes_detectes"]
+        # Validation stricte : on ne garde que les postes bien formés
+        postes_valides = [p for p in postes if isinstance(p, dict) and "id_poste" in p]
+
+        if not postes_valides:
+            st.error("❌ La réponse de l'IA est mal structurée (postes invalides). Réessayez.")
+            st.stop()
+
+        st.session_state["data_ia"] = postes_valides
         st.session_state["analyse_effectuee"] = True
         progress_bar.empty()
 
@@ -220,6 +229,13 @@ if st.session_state.get("analyse_effectuee"):
 
     # 2. Préparer les données pour le Tableau Modifiable
     raw_postes = st.session_state["data_ia"]
+
+    # Garde-fou : purge les entrées mal formées (ex: ancien format resté en session)
+    raw_postes = [p for p in raw_postes if isinstance(p, dict) and "id_poste" in p]
+    if not raw_postes:
+        st.error("❌ Données d'analyse invalides. Cliquez sur '🔄 Nouvelle analyse' pour relancer.")
+        st.stop()
+
     rows = []
 
     # Dictionnaire plat pour retrouver les prix unitaires
@@ -228,7 +244,10 @@ if st.session_state.get("analyse_effectuee"):
         for p in cat["postes"]:
             prix_dict[p["id"]] = p.get(f"prix_{gamme_prix}_ht", 0)
 
-    postes_inconnus = [p["id_poste"] for p in raw_postes if p["id_poste"] not in prix_dict]
+    postes_inconnus = [
+        p.get("id_poste", "?") for p in raw_postes
+        if p.get("id_poste") not in prix_dict
+    ]
     if postes_inconnus:
         st.warning(
             f"⚠️ {len(postes_inconnus)} poste(s) non reconnu(s) dans la base de prix "
@@ -236,7 +255,7 @@ if st.session_state.get("analyse_effectuee"):
         )
 
     for p in raw_postes:
-        p_id = p["id_poste"]
+        p_id = p.get("id_poste", "?")
         pu = prix_dict.get(p_id, 0)
         qte = p.get("quantite_estimee", 1.0)
         rows.append({
