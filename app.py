@@ -193,6 +193,9 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
 
         if not postes_valides:
             st.error("❌ La réponse de l'IA est mal structurée (postes invalides). Réessayez.")
+            with st.expander("🔍 Détail technique (pour diagnostic)"):
+                st.write("Type de `postes_detectes` :", type(postes))
+                st.json(postes)
             st.stop()
 
         st.session_state["data_ia"] = postes_valides
