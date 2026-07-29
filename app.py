@@ -91,14 +91,6 @@ marge_pct = st.sidebar.slider(
     help="Pourcentage réservé aux imprévus de chantier (vices cachés, isolation, etc.)"
 )
 
-surface_piece = st.sidebar.number_input(
-    "Surface au sol estimée de la pièce (m²)",
-    min_value=1.0,
-    max_value=200.0,
-    value=15.0,
-    step=1.0
-)
-
 # --- ZONE UPLOAD PHOTOS ---
 uploaded_files = st.file_uploader(
     "Choisissez 1 à 5 photos de la pièce",
@@ -153,9 +145,8 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
 
         prompt_content = images_payload + [{
             "type": "text",
-            "text": f"Analyse ces photos pour une pièce de {surface_piece} m2. "
-                    f"Retourne un JSON structuré avec la liste des travaux nécessaires "
-                    f"en utilisant uniquement les IDs valides."
+            "text": "Analyse ces photos de la pièce et retourne un JSON structuré avec la liste "
+                    "des travaux nécessaires, en utilisant uniquement les IDs valides."
         }]
 
         progress_bar.progress(1.0, text="Analyse par Claude en cours...")
@@ -389,10 +380,21 @@ if st.session_state.get("analyse_effectuee"):
 
     # 4. Affichage des Métriques Financières
     st.markdown("### 💰 Récapitulatif Financier")
-    c1, c2, c3 = st.columns(3)
+
+    surface_piece = st.number_input(
+        "Surface au sol de la pièce (m²) — pour le calcul du prix au m²",
+        min_value=1.0,
+        max_value=200.0,
+        value=st.session_state.get("surface_piece", 15.0),
+        step=1.0,
+        key="surface_piece"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Sous-total Travaux (HT)", f"{sous_total_ht:,.2f} €".replace(",", " "))
     c2.metric(f"Sécurité & Impondérables ({marge_pct}%)", f"{montant_imponderables:,.2f} €".replace(",", " "))
     c3.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "), delta=f"{marge_pct}% marge incluse")
+    c4.metric("Prix au m²", f"{(total_general_ht / surface_piece):,.2f} €/m²".replace(",", " "))
 
     # 5. Export PDF
     if st.button("📥 Télécharger le Devis au format PDF"):
