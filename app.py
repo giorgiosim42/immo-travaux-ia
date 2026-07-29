@@ -1,174 +1,200 @@
-"""
-Estimation IA Immo - MVP Streamlit
-Estime le coût des travaux d'une pièce à partir de photos + contexte.
-
-Lancer avec : streamlit run app.py
-Nécessite une variable d'environnement ANTHROPIC_API_KEY (ou st.secrets)
-"""
-
-import base64
+import streamlit as st
+import pandas as pd
 import json
 import os
-
-import streamlit as st
 from anthropic import Anthropic
+from calcul_devis import calculer_devis  # Assure-toi que cette fonction existe dans ton calcul_devis.py
+from export_pdf import generer_pdf       # Assure-toi que cette fonction existe dans ton export_pdf.py
 
-from calcul_devis import charger_base_prix, calculer_devis
-from prompts import SYSTEM_PROMPT_TEMPLATE
+st.set_page_config(page_title="IA Immo - Estimation Travaux", page_icon="🏗️", layout="wide")
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-st.set_page_config(page_title="Estimation IA Immo", page_icon="🏗️", layout="wide")
+st.title("🏗️ Estimation IA de Travaux Immo")
+st.markdown("Téléversez les photos d'une pièce et obtenez une estimation financière détaillée et ajustable.")
 
-client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", st.secrets.get("ANTHROPIC_API_KEY", "")))
-BASE_PRIX = charger_base_prix("base_prix_travaux.json")
+# --- BARRE LIATÉRALE : PARAMÈTRES ET COEFFICIENTS ---
+st.sidebar.header("⚙️ Paramètres du projet")
 
-LABELS_LOCALISATION = {k: v["label"] for k, v in BASE_PRIX["coefficients"]["localisation"].items()}
-LABELS_ETAT = {k: v["label"] for k, v in BASE_PRIX["coefficients"]["etat_bien"].items()}
-LABELS_GAMME = {"eco": "Éco", "standard": "Standard", "premium": "Premium"}
+localisation = st.sidebar.selectbox(
+    "Localisation du bien",
+    ["villes_moyennes_rural", "grandes_metropoles", "ile_de_france"],
+    format_func=lambda x: {
+        "villes_moyennes_rural": "Villes moyennes / Zones rurales (x1.0)",
+        "grandes_metropoles": "Grandes métropoles (x1.15)",
+        "ile_de_france": "Île-de-France / Paris (x1.20)"
+    }[x]
+)
 
+etat_bien = st.sidebar.selectbox(
+    "État initial constaté",
+    ["rafraichissement", "renovation_moyenne", "renovation_lourde"],
+    format_func=lambda x: {
+        "rafraichissement": "Rafraîchissement léger",
+        "renovation_moyenne": "Rénovation moyenne",
+        "renovation_lourde": "Rénovation lourde / Démolition"
+    }[x]
+)
 
-# ---------------------------------------------------------------------------
-# Fonctions utilitaires
-# ---------------------------------------------------------------------------
-def encoder_image_base64(fichier) -> tuple[str, str]:
-    """Retourne (media_type, base64_data) pour un fichier uploadé Streamlit."""
-    media_type = fichier.type  # ex: 'image/jpeg'
-    data = base64.standard_b64encode(fichier.getvalue()).decode("utf-8")
-    return media_type, data
+gamme_prix = st.sidebar.select_slider(
+    "Gamme de prestations",
+    options=["eco", "standard", "premium"],
+    value="standard",
+    format_func=lambda x: x.capitalize()
+)
 
+# 💡 NOUVEAU : Curseur pour la marge d'impondérables dynamique
+marge_pct = st.sidebar.slider(
+    "Marge d'impondérables / Sécurité (%)",
+    min_value=5,
+    max_value=25,
+    value=10,
+    step=1,
+    help="Pourcentage réservé aux imprévus de chantier (vices cachés, isolation, etc.)"
+)
 
-def analyser_photos(photos, niveau_travaux_label: str, gamme_label: str) -> dict:
-    """Appelle l'API Claude vision et retourne le JSON des postes détectés."""
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
-        niveau_travaux=niveau_travaux_label,
-        gamme=gamme_label,
-    )
+surface_piece = st.sidebar.number_input(
+    "Surface au sol estimée de la pièce (m²)",
+    min_value=1.0,
+    max_value=200.0,
+    value=15.0,
+    step=1.0
+)
 
-    content_blocks = []
-    for photo in photos:
-        media_type, data = encoder_image_base64(photo)
-        content_blocks.append({
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type, "data": data},
+# --- ZONE UPLOAD PHOTOS ---
+uploaded_files = st.file_uploader(
+    "Choisissez 1 à 5 photos de la pièce",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+    cols = st.columns(len(uploaded_files))
+    for idx, file in enumerate(uploaded_files):
+        cols[idx].image(file, caption=f"Photo {idx+1}", use_column_width=True)
+
+# --- BOUTON DE GÉNÉRATION ET ANALYSE ---
+if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_files):
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        st.error("❌ Clé API Anthropic manquante dans les Secrets Streamlit.")
+        st.stop()
+
+    with st.spinner("Analyse des images par Claude 3.5 Sonnet..."):
+        try:
+            # Appel API Anthropic
+            client = Anthropic(api_key=api_key)
+            
+            # --- Préparation des images pour l'API ---
+            import base64
+            images_payload = []
+            for file in uploaded_files:
+                file.seek(0)
+                base64_image = base64.b64encode(file.read()).decode('utf-8')
+                images_payload.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": file.type,
+                        "data": base64_image
+                    }
+                })
+
+            prompt_content = images_payload + [{
+                "type": "text",
+                "text": f"Analyse ces photos pour une pièce de {surface_piece} m2. Retourne un JSON structuré avec la liste des travaux nécessaires en utilisant uniquement les IDs valides."
+            }]
+
+            from prompts import SYSTEM_PROMPT  # Assure-toi que SYSTEM_PROMPT est défini
+            response = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=1500,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": prompt_content}]
+            )
+
+            # Extraire le JSON de la réponse
+            response_text = response.content[0].text
+            clean_json = response_text.replace("```json", "").replace("```", "").strip()
+            data_ia = json.loads(clean_json)
+
+            # Stocker les résultats bruts dans la session
+            st.session_state["data_ia"] = data_ia["postes_detectes"]
+            st.session_state["analyse_effectuee"] = True
+
+        except Exception as e:
+            st.error(f"Erreur lors de l'analyse IA : {e}")
+
+# --- AFFICHAGE ET ÉDITION DU DEVIS (SI ANALYSE DÉJÀ EFFECTUÉE) ---
+if st.session_state.get("analyse_effectuee"):
+    st.markdown("---")
+    st.subheader("📋 Devis Estimatif & Ajustement")
+    st.info("💡 **Astuce :** Vous pouvez modifier directement les quantites ou les descriptions dans le tableau ci-dessous !")
+
+    # 1. Charger la base de données JSON
+    with open("base_prix_travaux.json", "r", encoding="utf-8") as f:
+        base_prix = json.load(f)
+
+    # 2. Préparer les données pour le Tableau Modifiable
+    raw_postes = st.session_state["data_ia"]
+    rows = []
+    
+    # Dictionnaire plat pour retrouver les prix unitaires
+    prix_dict = {}
+    for cat in base_prix["categories_travaux"]:
+        for p in cat["postes"]:
+            prix_dict[p["id"]] = p.get(f"prix_{gamme_prix}_ht", 0)
+
+    for p in raw_postes:
+        p_id = p["id_poste"]
+        pu = prix_dict.get(p_id, 0)
+        qte = p.get("quantite_estimee", 1.0)
+        rows.append({
+            "ID Poste": p_id,
+            "Description": p.get("explication", ""),
+            "Quantité": float(qte),
+            "Prix Unitaire HT (€)": float(pu),
+            "Confiance IA": p.get("niveau_confiance", "Moyen")
         })
-    content_blocks.append({
-        "type": "text",
-        "text": "Voici les photos de la pièce à analyser. Réponds uniquement avec le JSON demandé.",
-    })
 
-    response = client.messages.create(
-        model="claude-sonnet-5",
-        max_tokens=2000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": content_blocks}],
+    df_initial = pd.DataFrame(rows)
+
+    # 💡 NOUVEAU : st.data_editor rend le tableau entièrement modifiable par l'utilisateur !
+    edited_df = st.data_editor(
+        df_initial,
+        num_rows="dynamic", # Permet d'ajouter/supprimer des lignes
+        column_config={
+            "ID Poste": st.column_config.TextColumn("Identifiant", disabled=True),
+            "Quantité": st.column_config.NumberColumn("Quantité", min_value=0.0, step=0.5, format="%.1f"),
+            "Prix Unitaire HT (€)": st.column_config.NumberColumn("Prix U. (€ HT)", min_value=0.0, format="%.2f €"),
+            "Confiance IA": st.column_config.SelectboxColumn("Confiance", options=["Élevé", "Moyen", "Faible"], disabled=True)
+        },
+        use_container_width=True
     )
 
-    texte_reponse = "".join(block.text for block in response.content if block.type == "text")
-    texte_nettoye = texte_reponse.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    return json.loads(texte_nettoye)
+    # 3. Calculs dynamiques basés sur le tableau édité
+    coeff_loc = base_prix["coefficients"]["localisation"][localisation]["coefficient"]
+    coeff_etat = base_prix["coefficients"]["etat_bien"][etat_bien]["coefficient"]
 
+    # Calcul du sous-total
+    edited_df["Sous-Total HT (€)"] = edited_df["Quantité"] * edited_df["Prix Unitaire HT (€)"] * coeff_loc * coeff_etat
+    sous_total_ht = edited_df["Sous-Total HT (€)"].sum()
+    
+    # Application du pourcentage d'impondérables configuré dans le slider
+    montant_imponderables = sous_total_ht * (marge_pct / 100.0)
+    total_general_ht = sous_total_ht + montant_imponderables
 
-# ---------------------------------------------------------------------------
-# Interface
-# ---------------------------------------------------------------------------
-st.title("🏗️ Estimation IA des travaux")
-st.caption("Téléversez des photos d'une pièce pour obtenir une estimation instantanée du coût des travaux.")
+    # 4. Affichage des Métriques Financières
+    st.markdown("### 💰 Récapitulatif Financier")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Sous-total Travaux (HT)", f"{sous_total_ht:,.2f} €".replace(",", " "))
+    c2.metric(f"Sécurité & Impondérables ({marge_pct}%)", f"{montant_imponderables:,.2f} €".replace(",", " "))
+    c3.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "), delta=f"{marge_pct}% marge incluse")
 
-with st.form("formulaire_estimation"):
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        photos = st.file_uploader(
-            "Photos de la pièce (1 à 5)",
-            type=["jpg", "jpeg", "png", "webp"],
-            accept_multiple_files=True,
+    # 5. Export PDF
+    if st.button("📥 Télécharger le Devis au format PDF"):
+        pdf_bytes = generer_pdf(edited_df, sous_total_ht, montant_imponderables, total_general_ht, marge_pct)
+        st.download_button(
+            label="Clic ici pour enregistrer le PDF",
+            data=pdf_bytes,
+            file_name="devis_estimation_travaux.pdf",
+            mime="application/pdf"
         )
-
-    with col2:
-        localisation = st.selectbox(
-            "Localisation du bien",
-            options=list(LABELS_LOCALISATION.keys()),
-            format_func=lambda k: LABELS_LOCALISATION[k],
-        )
-        etat_bien = st.selectbox(
-            "Niveau de travaux envisagé",
-            options=list(LABELS_ETAT.keys()),
-            format_func=lambda k: LABELS_ETAT[k],
-        )
-        gamme = st.selectbox(
-            "Gamme choisie",
-            options=list(LABELS_GAMME.keys()),
-            format_func=lambda k: LABELS_GAMME[k],
-        )
-
-    submit = st.form_submit_button("Estimer les travaux", use_container_width=True)
-
-if submit:
-    if not photos or len(photos) == 0:
-        st.error("Merci de téléverser au moins une photo.")
-    elif len(photos) > 5:
-        st.error("5 photos maximum.")
-    else:
-        with st.spinner("Analyse des photos par l'IA en cours..."):
-            try:
-                resultat_ia = analyser_photos(photos, LABELS_ETAT[etat_bien], LABELS_GAMME[gamme])
-            except Exception as e:
-                st.error(f"Erreur lors de l'analyse IA : {e}")
-                st.stop()
-
-        st.session_state["resultat_ia"] = resultat_ia
-        st.session_state["params"] = {"localisation": localisation, "etat_bien": etat_bien, "gamme": gamme}
-
-# ---------------------------------------------------------------------------
-# Restitution des résultats
-# ---------------------------------------------------------------------------
-if "resultat_ia" in st.session_state:
-    resultat_ia = st.session_state["resultat_ia"]
-    params = st.session_state["params"]
-
-    st.subheader(f"Pièce détectée : {resultat_ia.get('piece_detectee', 'N/A')}")
-    st.info(resultat_ia.get("observations_generales", ""))
-
-    devis = calculer_devis(
-        postes_detectes=resultat_ia["postes_detectes"],
-        localisation=params["localisation"],
-        etat_bien=params["etat_bien"],
-        gamme=params["gamme"],
-        base=BASE_PRIX,
-    )
-
-    st.subheader("📋 Devis estimatif")
-    st.dataframe(
-        [
-            {
-                "Poste": l["nom"],
-                "Quantité": l["quantite"],
-                "Unité": l["unite"],
-                "Prix unitaire HT": f"{l['prix_unitaire_ht']} €",
-                "Coût HT": f"{l['cout_ht']:.2f} €",
-                "Confiance": l["confiance"],
-            }
-            for l in devis["lignes"]
-        ],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    col_a, col_b, col_c = st.columns(3)
-    col_a.metric("Sous-total HT", f"{devis['sous_total_ht']:.2f} €")
-    col_b.metric(f"Marge sécurité ({devis['marge_securite_pct']}%)", f"{devis['marge_securite_montant']:.2f} €")
-    col_c.metric("Total estimé HT", f"{devis['total_ht']:.2f} €")
-
-    st.caption(
-        "⚠️ Estimation indicative basée sur une analyse visuelle par IA, sans métré ni "
-        "visite technique. À affiner avec un professionnel avant tout engagement."
-    )
-
-    # Export PDF -> voir export_pdf.py pour l'implémentation avec fpdf2
-    if st.button("📄 Générer le PDF"):
-        from export_pdf import generer_pdf_devis
-        chemin_pdf = generer_pdf_devis(devis, resultat_ia)
-        with open(chemin_pdf, "rb") as f:
-            st.download_button("Télécharger le devis PDF", f, file_name="devis_estimatif.pdf")
