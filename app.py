@@ -184,6 +184,13 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
 
         postes = data_ia.get("postes_detectes")
 
+        # Cas où le modèle renvoie une chaîne JSON au lieu d'un vrai tableau
+        if isinstance(postes, str):
+            try:
+                postes = json.loads(postes)
+            except json.JSONDecodeError:
+                postes = None
+
         if not postes:
             st.warning("⚠️ Aucun poste de travaux détecté sur ces photos. Essayez avec d'autres images.")
             st.stop()
@@ -309,4 +316,3 @@ if st.session_state.get("analyse_effectuee"):
             file_name="devis_estimation_travaux.pdf",
             mime="application/pdf"
         )
-
