@@ -9,26 +9,7 @@ from anthropic import Anthropic
 from calcul_devis import calculer_devis  # Assure-toi que cette fonction existe dans ton calcul_devis.py
 from export_pdf import generer_pdf       # Assure-toi que cette fonction existe dans ton export_pdf.py
 from prompts import SYSTEM_PROMPT        # Assure-toi que SYSTEM_PROMPT est défini
-
-# Mapping des id_poste (liste fermée définie dans prompts.py) vers les catégories
-# affichées à l'utilisateur pour le filtrage post-analyse.
-CATEGORIES_TRAVAUX = {
-    "Peinture": ["peinture"],
-    "Sols": ["revetement_sol_vinyle_parquet"],
-    "Carrelage / Faïence": ["carrelage_faience"],
-    "Électricité": ["tableau_electrique", "electricite_complete"],
-    "Menuiserie": ["fenetre_pvc"],
-    "Plomberie": ["wc_remplacement", "douche_renovation", "meuble_vasque", "chauffe_eau"],
-    "Autres": ["cloison_placo", "cuisine_equipee"],
-}
-
-
-def get_categorie(id_poste):
-    """Retourne le nom de la catégorie associée à un id_poste (Autres si non trouvé)."""
-    for categorie, ids in CATEGORIES_TRAVAUX.items():
-        if id_poste in ids:
-            return categorie
-    return "Autres"
+import plotly.express as px
 
 st.set_page_config(page_title="IA Immo - Estimation Travaux", page_icon="🏗️", layout="wide")
 
@@ -54,6 +35,21 @@ def charger_base_prix():
     """Charge la base de prix une seule fois (mise en cache)."""
     with open("base_prix_travaux.json", "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+@st.cache_data
+def construire_mapping_categories(_base_prix):
+    """Construit dynamiquement le mapping id_poste -> corps de métier
+    à partir des catégories définies dans base_prix_travaux.json.
+    Ainsi, ajouter un poste dans le JSON suffit : pas besoin de toucher au code."""
+    mapping = {}
+    ordre_categories = []
+    for cat in _base_prix["categories_travaux"]:
+        nom_cat = cat["nom_categorie"]
+        ordre_categories.append(nom_cat)
+        for poste in cat["postes"]:
+            mapping[poste["id"]] = nom_cat
+    return mapping, ordre_categories
 
 
 # --- BARRE LATÉRALE : PARAMÈTRES ET COEFFICIENTS ---
@@ -254,8 +250,12 @@ if st.session_state.get("analyse_effectuee"):
         st.session_state.pop("data_ia", None)
         st.rerun()
 
-    # 1. Charger la base de données JSON (mise en cache)
+    # 1. Charger la base de données JSON (mise en cache) + mapping catégories
     base_prix = charger_base_prix()
+    id_vers_categorie, ordre_categories = construire_mapping_categories(base_prix)
+
+    def get_categorie(id_poste):
+        return id_vers_categorie.get(id_poste, "Autres")
 
     # 2. Préparer les données pour le Tableau Modifiable
     raw_postes = st.session_state["data_ia"]
@@ -266,18 +266,18 @@ if st.session_state.get("analyse_effectuee"):
         st.error("❌ Données d'analyse invalides. Cliquez sur '🔄 Nouvelle analyse' pour relancer.")
         st.stop()
 
-    # --- Filtre par type de travaux ---
-    st.markdown("### 🧰 Types de travaux à inclure dans le devis")
+    # --- Filtre par type de travaux (corps de métier) ---
+    st.markdown("### 🧰 Corps de métier à inclure dans le devis")
     categories_presentes = sorted(
         {get_categorie(p.get("id_poste", "")) for p in raw_postes},
-        key=lambda c: list(CATEGORIES_TRAVAUX.keys()).index(c) if c in CATEGORIES_TRAVAUX else 99
+        key=lambda c: ordre_categories.index(c) if c in ordre_categories else 99
     )
 
     categories_selectionnees = st.multiselect(
-        "Décochez les catégories que vous ne souhaitez pas inclure :",
+        "Décochez les corps de métier que vous ne souhaitez pas inclure :",
         options=categories_presentes,
         default=categories_presentes,
-        help="Seuls les postes détectés par l'IA appartenant aux catégories cochées apparaîtront dans le devis."
+        help="Seuls les postes détectés par l'IA appartenant aux corps de métier cochés apparaîtront dans le devis."
     )
 
     raw_postes_filtres = [
@@ -287,10 +287,10 @@ if st.session_state.get("analyse_effectuee"):
 
     nb_exclus = len(raw_postes) - len(raw_postes_filtres)
     if nb_exclus > 0:
-        st.caption(f"ℹ️ {nb_exclus} poste(s) exclu(s) du devis suite au filtre par catégorie.")
+        st.caption(f"ℹ️ {nb_exclus} poste(s) exclu(s) du devis suite au filtre par corps de métier.")
 
     if not raw_postes_filtres:
-        st.warning("⚠️ Aucun poste à afficher : sélectionnez au moins une catégorie de travaux ci-dessus.")
+        st.warning("⚠️ Aucun poste à afficher : sélectionnez au moins un corps de métier ci-dessus.")
         st.stop()
 
     raw_postes = raw_postes_filtres
@@ -350,6 +350,42 @@ if st.session_state.get("analyse_effectuee"):
 
     montant_imponderables = sous_total_ht * (marge_pct / 100.0)
     total_general_ht = sous_total_ht + montant_imponderables
+
+    # 3bis. Ventilation par corps de métier (sous-totaux + camembert)
+    if sous_total_ht > 0:
+        st.markdown("### 🧱 Répartition par corps de métier")
+        repartition = (
+            edited_df.groupby("Catégorie")["Sous-Total HT (€)"]
+            .sum()
+            .reset_index()
+            .sort_values("Sous-Total HT (€)", ascending=False)
+        )
+        repartition["Part du budget"] = (repartition["Sous-Total HT (€)"] / sous_total_ht * 100).round(1)
+
+        col_tableau, col_camembert = st.columns([1, 1])
+
+        with col_tableau:
+            st.dataframe(
+                repartition,
+                column_config={
+                    "Catégorie": st.column_config.TextColumn("Corps de métier"),
+                    "Sous-Total HT (€)": st.column_config.NumberColumn("Sous-total HT (€)", format="%.2f €"),
+                    "Part du budget": st.column_config.NumberColumn("Part du budget", format="%.1f %%")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+
+        with col_camembert:
+            fig = px.pie(
+                repartition,
+                names="Catégorie",
+                values="Sous-Total HT (€)",
+                hole=0.4
+            )
+            fig.update_traces(textposition="inside", textinfo="percent+label")
+            fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=350)
+            st.plotly_chart(fig, use_container_width=True)
 
     # 4. Affichage des Métriques Financières
     st.markdown("### 💰 Récapitulatif Financier")
