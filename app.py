@@ -52,18 +52,83 @@ def construire_mapping_categories(_base_prix):
     return mapping, ordre_categories
 
 
+ZONE_LABELS = {
+    "villes_moyennes_rural": "Villes moyennes / Zones rurales",
+    "grandes_metropoles": "Grandes métropoles",
+    "ile_de_france": "Île-de-France / Paris"
+}
+
+
+@st.cache_data(show_spinner=False)
+def classifier_localisation(ville, _api_key):
+    """Demande à l'IA de classer une ville française dans une zone de coefficient immobilier.
+    Mis en cache par ville : une même ville n'est classée qu'une seule fois."""
+    client = Anthropic(api_key=_api_key)
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=200,
+        system=(
+            "Tu es un expert de la géographie immobilière française. "
+            "Ton rôle est de classer une ville française dans l'une des 3 zones de coût de travaux suivantes : "
+            "'ile_de_france' (Paris et sa proche/grande couronne), "
+            "'grandes_metropoles' (grandes villes françaises hors Île-de-France : Lyon, Marseille, Bordeaux, "
+            "Lille, Toulouse, Nantes, Nice, Strasbourg, Rennes, Montpellier, et leurs agglomérations proches), "
+            "'villes_moyennes_rural' (toutes les autres villes moyennes, petites villes et zones rurales). "
+            "Si la ville n'est pas reconnue ou est ambiguë, choisis 'villes_moyennes_rural' par défaut."
+        ),
+        tools=[{
+            "name": "classification_localisation",
+            "description": "Retourne la zone de coût de travaux correspondant à une ville française.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "zone": {
+                        "type": "string",
+                        "enum": ["villes_moyennes_rural", "grandes_metropoles", "ile_de_france"]
+                    }
+                },
+                "required": ["zone"]
+            }
+        }],
+        tool_choice={"type": "tool", "name": "classification_localisation"},
+        messages=[{"role": "user", "content": f"Ville : {ville}"}]
+    )
+    tool_use_block = next(b for b in response.content if b.type == "tool_use")
+    return tool_use_block.input.get("zone", "villes_moyennes_rural")
+
+
+# --- Récupération de la clé API et chargement de la base de prix (nécessaires dès la sidebar) ---
+api_key = st.secrets.get("ANTHROPIC_API_KEY") if hasattr(st, "secrets") else None
+api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+
+base_prix = charger_base_prix()
+id_vers_categorie, ordre_categories = construire_mapping_categories(base_prix)
+
 # --- BARRE LATÉRALE : PARAMÈTRES ET COEFFICIENTS ---
 st.sidebar.header("⚙️ Paramètres du projet")
 
-localisation = st.sidebar.selectbox(
-    "Localisation du bien",
-    ["villes_moyennes_rural", "grandes_metropoles", "ile_de_france"],
-    format_func=lambda x: {
-        "villes_moyennes_rural": "Villes moyennes / Zones rurales (x1.0)",
-        "grandes_metropoles": "Grandes métropoles (x1.15)",
-        "ile_de_france": "Île-de-France / Paris (x1.20)"
-    }[x]
+ville_bien = st.sidebar.text_input(
+    "Ville du bien",
+    placeholder="ex : Lyon, Bordeaux, Chartres, Paris 15e...",
+    help="L'IA détecte automatiquement la zone (Île-de-France / grande métropole / ville moyenne-rurale) "
+         "et applique le coefficient correspondant."
 )
+
+coeff_loc = 1.0
+zone_detectee = None
+
+if ville_bien.strip():
+    if not api_key:
+        st.sidebar.warning("⚠️ Clé API manquante : coefficient par défaut (x1.0) appliqué.")
+    else:
+        try:
+            zone_detectee = classifier_localisation(ville_bien.strip(), api_key)
+            coeff_loc = base_prix["coefficients"]["localisation"].get(zone_detectee, {}).get("coefficient", 1.0)
+            st.sidebar.caption(f"📍 Zone détectée : **{ZONE_LABELS.get(zone_detectee, zone_detectee)}** (coefficient x{coeff_loc})")
+        except Exception:
+            st.sidebar.warning("⚠️ Impossible de déterminer la zone automatiquement. Coefficient par défaut (x1.0) appliqué.")
+else:
+    st.sidebar.caption("💡 Renseignez une ville pour appliquer automatiquement le coefficient de localisation.")
 
 etat_bien = st.sidebar.selectbox(
     "État initial constaté",
@@ -109,9 +174,6 @@ if uploaded_files:
 
 # --- BOUTON DE GÉNÉRATION ET ANALYSE ---
 if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_files):
-    api_key = st.secrets.get("ANTHROPIC_API_KEY") if hasattr(st, "secrets") else None
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-
     if not api_key:
         st.error("❌ Clé API Anthropic manquante. Ajoutez-la dans les Secrets Streamlit (ANTHROPIC_API_KEY).")
         st.stop()
@@ -241,9 +303,7 @@ if st.session_state.get("analyse_effectuee"):
         st.session_state.pop("data_ia", None)
         st.rerun()
 
-    # 1. Charger la base de données JSON (mise en cache) + mapping catégories
-    base_prix = charger_base_prix()
-    id_vers_categorie, ordre_categories = construire_mapping_categories(base_prix)
+    # 1. Base de prix et mapping catégories déjà chargés en haut du fichier
 
     def get_categorie(id_poste):
         return id_vers_categorie.get(id_poste, "Autres")
@@ -350,7 +410,7 @@ if st.session_state.get("analyse_effectuee"):
     )
 
     # 3. Calculs dynamiques basés sur le tableau édité (seules les lignes "Inclure" cochées comptent)
-    coeff_loc = base_prix["coefficients"]["localisation"][localisation]["coefficient"]
+    # coeff_loc a déjà été déterminé par l'IA à partir de la ville saisie (voir sidebar)
     coeff_etat = base_prix["coefficients"]["etat_bien"][etat_bien]["coefficient"]
 
     edited_df["Sous-Total HT (€)"] = edited_df["Quantité"] * edited_df["Prix Unitaire HT (€)"] * coeff_loc * coeff_etat
