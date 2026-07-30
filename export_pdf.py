@@ -1,4 +1,5 @@
-ffrom fpdf import FPDF
+# -*- coding: utf-8 -*-
+from fpdf import FPDF
 import pandas as pd
 from datetime import datetime
 
@@ -7,7 +8,7 @@ def generer_pdf(df_items: pd.DataFrame, sous_total: float, imponderables: float,
     pdf = FPDF()
     pdf.add_page()
 
-    # --- En-tête ---
+    # --- Entete ---
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 10, "Devis Estimatif de Travaux - IA Immo", new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.set_font("Helvetica", "", 9)
@@ -19,6 +20,16 @@ def generer_pdf(df_items: pd.DataFrame, sous_total: float, imponderables: float,
     # Largeurs de colonnes (mm) - total ~165mm
     W_POSTE, W_UNITE, W_QTE, W_PU, W_ST = 70, 20, 20, 27, 28
 
+    # Cles de colonnes du DataFrame (echappees en unicode pour eviter tout probleme d'encodage fichier)
+    COL_CATEGORIE = "Cat\u00e9gorie"           # accented: Categorie
+    COL_CONSEIL_IA = "Conseil IA"
+    COL_DESCRIPTION = "Description"
+    COL_ID_POSTE = "ID Poste"
+    COL_UNITE = "Unit\u00e9"                   # accented: Unite
+    COL_QUANTITE = "Quantit\u00e9"             # accented: Quantite
+    COL_PRIX_U = "Prix Unitaire HT (\u20ac)"   # accented: Prix Unitaire HT
+    COL_SOUS_TOTAL = "Sous-Total HT (\u20ac)"  # accented: Sous-Total HT
+
     def entete_tableau():
         pdf.set_font("Helvetica", "B", 9)
         pdf.set_fill_color(230, 230, 230)
@@ -29,14 +40,14 @@ def generer_pdf(df_items: pd.DataFrame, sous_total: float, imponderables: float,
         pdf.cell(W_ST, 8, "Sous-Total HT", border=1, align="R", fill=True, new_x="LMARGIN", new_y="NEXT")
 
     # Si aucune colonne "Categorie" (ancien format), on traite tout comme une seule categorie
-    if "Catégorie" not in df_items.columns:
+    if COL_CATEGORIE not in df_items.columns:
         df_items = df_items.copy()
-        df_items["Catégorie"] = "Travaux"
+        df_items[COL_CATEGORIE] = "Travaux"
 
-    categories = df_items["Catégorie"].unique()
+    categories = df_items[COL_CATEGORIE].unique()
 
     for categorie in categories:
-        df_cat = df_items[df_items["Catégorie"] == categorie]
+        df_cat = df_items[df_items[COL_CATEGORIE] == categorie]
         if df_cat.empty:
             continue
 
@@ -52,12 +63,12 @@ def generer_pdf(df_items: pd.DataFrame, sous_total: float, imponderables: float,
         sous_total_cat = 0.0
 
         for _, row in df_cat.iterrows():
-            desc = str(row.get("Conseil IA", row.get("Description", row.get("ID Poste", "Poste"))))
+            desc = str(row.get(COL_CONSEIL_IA, row.get(COL_DESCRIPTION, row.get(COL_ID_POSTE, "Poste"))))
             desc = (desc[:55] + "...") if len(desc) > 55 else desc
-            unite = str(row.get("Unité", "") or "-")
-            qte = float(row.get("Quantité", 0) or 0)
-            pu = float(row.get("Prix Unitaire HT (€)", 0) or 0)
-            st_row = float(row.get("Sous-Total HT (€)", qte * pu) or 0)
+            unite = str(row.get(COL_UNITE, "") or "-")
+            qte = float(row.get(COL_QUANTITE, 0) or 0)
+            pu = float(row.get(COL_PRIX_U, 0) or 0)
+            st_row = float(row.get(COL_SOUS_TOTAL, qte * pu) or 0)
             sous_total_cat += st_row
 
             pdf.cell(W_POSTE, 7, desc, border=1)
