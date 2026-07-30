@@ -259,17 +259,18 @@ if st.session_state.get("analyse_effectuee"):
 
     # --- Filtre par type de travaux (corps de métier) ---
     st.markdown("### 🧰 Corps de métier à inclure dans le devis")
-    categories_presentes = sorted(
-        {get_categorie(p.get("id_poste", "")) for p in raw_postes},
-        key=lambda c: ordre_categories.index(c) if c in ordre_categories else 99
-    )
+    categories_detectees = {get_categorie(p.get("id_poste", "")) for p in raw_postes}
 
     categories_selectionnees = st.multiselect(
         "Décochez les corps de métier que vous ne souhaitez pas inclure :",
-        options=categories_presentes,
-        default=categories_presentes,
-        help="Seuls les postes détectés par l'IA appartenant aux corps de métier cochés apparaîtront dans le devis."
+        options=ordre_categories,
+        default=ordre_categories,
+        help="Les 7 corps de métier sont proposés. Ceux surlignés ci-dessous ont été détectés par l'IA sur vos photos ; "
+             "les autres peuvent être décochés ou laissés cochés si vous comptez ajouter des lignes manuellement."
     )
+
+    if categories_detectees:
+        st.caption(f"🔎 Détecté par l'IA sur vos photos : {', '.join(sorted(categories_detectees))}")
 
     raw_postes_filtres = [
         p for p in raw_postes
