@@ -58,6 +58,18 @@ ZONE_LABELS = {
     "ile_de_france": "Île-de-France / Paris"
 }
 
+TYPES_PIECE = [
+    "Salle de bain / Salle d'eau",
+    "WC / Sanitaires",
+    "Cuisine",
+    "Chambre",
+    "Salon / Séjour",
+    "Bureau",
+    "Buanderie / Cellier",
+    "Entrée / Couloir",
+    "Autre pièce"
+]
+
 
 @st.cache_data(show_spinner=False)
 def classifier_localisation(ville, _api_key):
@@ -156,6 +168,25 @@ marge_pct = st.sidebar.slider(
     help="Pourcentage réservé aux imprévus de chantier (vices cachés, isolation, etc.)"
 )
 
+# --- INFORMATIONS SUR LA PIÈCE (avant analyse) ---
+st.markdown("### 🚪 La pièce à analyser")
+col_piece, col_surface = st.columns(2)
+with col_piece:
+    nom_piece = st.selectbox(
+        "Type de pièce",
+        options=TYPES_PIECE,
+        key="nom_piece"
+    )
+with col_surface:
+    surface_piece = st.number_input(
+        "Surface au sol de la pièce (m²)",
+        min_value=1.0,
+        max_value=200.0,
+        value=st.session_state.get("surface_piece", 15.0),
+        step=1.0,
+        key="surface_piece"
+    )
+
 # --- ZONE UPLOAD PHOTOS ---
 uploaded_files = st.file_uploader(
     "Choisissez 1 à 5 photos de la pièce",
@@ -207,8 +238,9 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
 
         prompt_content = images_payload + [{
             "type": "text",
-            "text": "Analyse ces photos de la pièce et retourne un JSON structuré avec la liste "
-                    "des travaux nécessaires, en utilisant uniquement les IDs valides."
+            "text": f"Cette pièce est de type : {nom_piece} (surface au sol : {surface_piece} m²). "
+                    f"Analyse ces photos et retourne un JSON structuré avec la liste des travaux nécessaires, "
+                    f"en utilisant uniquement les IDs valides."
         }]
 
         progress_bar.progress(1.0, text="Analyse par Claude en cours...")
@@ -430,7 +462,7 @@ if st.session_state.get("analyse_effectuee"):
 
     edited_df = st.data_editor(
         df_initial,
-        num_rows="dynamic",  # Permet d'ajouter/supprimer des lignes
+        num_rows="fixed",  # L'ajout se fait via le catalogue ci-dessus ; le retrait via la case "Inclure"
         column_order=["Inclure", "Catégorie", "ID Poste", "Conseil IA", "Unité", "Quantité", "Prix Unitaire HT (€)"],
         column_config={
             "Inclure": st.column_config.CheckboxColumn(
@@ -445,7 +477,10 @@ if st.session_state.get("analyse_effectuee"):
             "Conseil IA": st.column_config.TextColumn("Conseil IA"),
             "Unité": st.column_config.TextColumn("Unité", disabled=True),
             "Quantité": st.column_config.NumberColumn("Quantité", min_value=0.0, step=0.5, format="%.1f"),
-            "Prix Unitaire HT (€)": st.column_config.NumberColumn("Prix U. (€ HT)", min_value=0.0, format="%.2f €"),
+            "Prix Unitaire HT (€)": st.column_config.NumberColumn(
+                "Prix U. (€ HT)", format="%.2f €", disabled=True,
+                help="Prix automatique, calculé depuis le catalogue selon la gamme choisie (éco/standard/premium)"
+            ),
         },
         use_container_width=True
     )
@@ -466,7 +501,17 @@ if st.session_state.get("analyse_effectuee"):
     montant_imponderables = sous_total_ht * (marge_pct / 100.0)
     total_general_ht = sous_total_ht + montant_imponderables
 
-    # 3bis. Ventilation par corps de métier (sous-totaux + camembert)
+    # 4. Affichage des Métriques Financières (surface déjà saisie en haut de page)
+    st.markdown("---")
+    st.markdown("### 💰 Récapitulatif Financier")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Sous-total Travaux (HT)", f"{sous_total_ht:,.2f} €".replace(",", " "))
+    c2.metric(f"Sécurité & Impondérables ({marge_pct}%)", f"{montant_imponderables:,.2f} €".replace(",", " "))
+    c3.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "), delta=f"{marge_pct}% marge incluse")
+    c4.metric("Prix au m²", f"{(total_general_ht / st.session_state.get('surface_piece', 15.0)):,.2f} €/m²".replace(",", " "))
+
+    # 5. Ventilation par corps de métier (sous-totaux + camembert)
     if sous_total_ht > 0:
         st.markdown("### 🧱 Répartition par corps de métier")
         repartition = (
@@ -502,25 +547,7 @@ if st.session_state.get("analyse_effectuee"):
             fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=350)
             st.plotly_chart(fig, use_container_width=True)
 
-    # 4. Affichage des Métriques Financières
-    st.markdown("### 💰 Récapitulatif Financier")
-
-    surface_piece = st.number_input(
-        "Surface au sol de la pièce (m²) — pour le calcul du prix au m²",
-        min_value=1.0,
-        max_value=200.0,
-        value=st.session_state.get("surface_piece", 15.0),
-        step=1.0,
-        key="surface_piece"
-    )
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Sous-total Travaux (HT)", f"{sous_total_ht:,.2f} €".replace(",", " "))
-    c2.metric(f"Sécurité & Impondérables ({marge_pct}%)", f"{montant_imponderables:,.2f} €".replace(",", " "))
-    c3.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "), delta=f"{marge_pct}% marge incluse")
-    c4.metric("Prix au m²", f"{(total_general_ht / surface_piece):,.2f} €/m²".replace(",", " "))
-
-    # 5. Export PDF (uniquement les postes cochés "Inclure")
+    # 6. Export PDF (uniquement les postes cochés "Inclure")
     if st.button("📥 Télécharger le Devis au format PDF"):
         pdf_bytes = generer_pdf(df_devis, sous_total_ht, montant_imponderables, total_general_ht, marge_pct)
         st.download_button(
