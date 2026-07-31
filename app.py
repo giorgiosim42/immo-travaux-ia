@@ -292,6 +292,11 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
             except json.JSONDecodeError:
                 postes = None
 
+        # Cas où le modèle renvoie un objet indexé numériquement ({"0": {...}, "1": {...}})
+        # au lieu d'un vrai tableau JSON
+        if isinstance(postes, dict):
+            postes = list(postes.values())
+
         if not postes:
             postes = []
             st.info(
