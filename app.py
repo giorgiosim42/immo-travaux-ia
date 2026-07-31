@@ -297,6 +297,18 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
         if isinstance(postes, dict):
             postes = list(postes.values())
 
+        # Cas où le modèle renvoie une liste imbriquée dans une liste ([[{...}, {...}]])
+        # au lieu d'un tableau plat : on aplatit d'un niveau
+        if isinstance(postes, list):
+            postes_aplatis = []
+            for item in postes:
+                if isinstance(item, list):
+                    postes_aplatis.extend(item)
+                elif isinstance(item, dict):
+                    postes_aplatis.append(item)
+                # tout autre type (string isolée, nombre...) est ignoré silencieusement
+            postes = postes_aplatis
+
         if not postes:
             postes = []
             st.info(
