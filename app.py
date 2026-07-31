@@ -261,18 +261,22 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
                 postes = None
 
         if not postes:
-            st.warning("⚠️ Aucun poste de travaux détecté sur ces photos. Essayez avec d'autres images.")
-            st.stop()
+            postes = []
+            st.info(
+                "ℹ️ Aucun poste de travaux détecté automatiquement sur ces photos. "
+                "Vous pourrez ajouter des postes manuellement dans la section ci-dessous."
+            )
+            postes_valides = []
+        else:
+            # Validation stricte : on ne garde que les postes bien formés
+            postes_valides = [p for p in postes if isinstance(p, dict) and "id_poste" in p]
 
-        # Validation stricte : on ne garde que les postes bien formés
-        postes_valides = [p for p in postes if isinstance(p, dict) and "id_poste" in p]
-
-        if not postes_valides:
-            st.error("❌ La réponse de l'IA est mal structurée (postes invalides). Réessayez.")
-            with st.expander("🔍 Détail technique (pour diagnostic)"):
-                st.write("Type de `postes_detectes` :", type(postes))
-                st.json(postes)
-            st.stop()
+            if not postes_valides:
+                st.error("❌ La réponse de l'IA est mal structurée (postes invalides). Réessayez.")
+                with st.expander("🔍 Détail technique (pour diagnostic)"):
+                    st.write("Type de `postes_detectes` :", type(postes))
+                    st.json(postes)
+                st.stop()
 
         st.session_state["data_ia"] = postes_valides
         st.session_state["analyse_effectuee"] = True
@@ -309,12 +313,49 @@ if st.session_state.get("analyse_effectuee"):
         return id_vers_categorie.get(id_poste, "Autres")
 
     # 2. Préparer les données pour le Tableau Modifiable
-    raw_postes = st.session_state["data_ia"]
+    raw_postes = st.session_state.get("data_ia", [])
 
     # Garde-fou : purge les entrées mal formées (ex: ancien format resté en session)
     raw_postes = [p for p in raw_postes if isinstance(p, dict) and "id_poste" in p]
+
+    # --- Ajout manuel d'un poste depuis le catalogue ---
+    catalogue_options = []
+    catalogue_labels = {}
+    for cat in base_prix["categories_travaux"]:
+        for poste in cat["postes"]:
+            catalogue_options.append(poste["id"])
+            catalogue_labels[poste["id"]] = f"{cat['nom_categorie']} — {poste['nom']} ({poste.get('unite', '')})"
+
+    with st.expander("➕ Ajouter un poste de travaux manuellement", expanded=(len(raw_postes) == 0)):
+        st.caption(
+            "L'IA n'a pas forcément tout détecté, ou vous souhaitez simuler des travaux non visibles sur les photos "
+            "(ex: peinture, changement de sol...). Choisissez un poste dans le catalogue et ajoutez-le au devis."
+        )
+        col_a, col_b, col_c = st.columns([3, 1, 1])
+        with col_a:
+            poste_choisi = st.selectbox(
+                "Poste à ajouter",
+                options=catalogue_options,
+                format_func=lambda x: catalogue_labels.get(x, x),
+                key="poste_a_ajouter"
+            )
+        with col_b:
+            qte_choisie = st.number_input("Quantité", min_value=0.1, value=1.0, step=0.5, key="qte_a_ajouter")
+        with col_c:
+            st.write("")
+            st.write("")
+            if st.button("➕ Ajouter", use_container_width=True):
+                nouveau_poste = {
+                    "id_poste": poste_choisi,
+                    "quantite_estimee": qte_choisie,
+                    "explication": "Ajouté manuellement par le client.",
+                    "niveau_confiance": "Manuel"
+                }
+                st.session_state["data_ia"] = st.session_state.get("data_ia", []) + [nouveau_poste]
+                st.rerun()
+
     if not raw_postes:
-        st.error("❌ Données d'analyse invalides. Cliquez sur '🔄 Nouvelle analyse' pour relancer.")
+        st.info("📭 Le devis est vide pour l'instant. Ajoutez un poste ci-dessus pour commencer.")
         st.stop()
 
     # --- Filtre par type de travaux (corps de métier) ---
