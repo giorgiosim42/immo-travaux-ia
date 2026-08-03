@@ -28,6 +28,7 @@ def init_db():
             nom_entreprise TEXT,
             telephone TEXT,
             ville_base TEXT,
+            rayon_km INTEGER DEFAULT 20,
             zones_desservies TEXT,
             corps_metier TEXT,
             description TEXT,
@@ -44,6 +45,14 @@ def init_db():
             FOREIGN KEY (artisan_id) REFERENCES artisans(id)
         )
     """)
+
+    # Migration douce : si la table "artisans" existait deja sans la colonne
+    # rayon_km (ancienne version du prototype), on l'ajoute sans rien casser.
+    try:
+        cur.execute("ALTER TABLE artisans ADD COLUMN rayon_km INTEGER DEFAULT 20")
+    except sqlite3.OperationalError:
+        pass  # la colonne existe deja
+
     conn.commit()
     conn.close()
 
@@ -66,9 +75,11 @@ def get_artisan_by_id(artisan_id):
     return dict(row) if row else None
 
 
-def upsert_artisan(email, nom_entreprise, telephone, ville_base, zones_desservies,
+def upsert_artisan(email, nom_entreprise, telephone, ville_base, rayon_km,
                     corps_metier_list, description, photos_paths):
-    """Cree la fiche artisan si elle n'existe pas, sinon la met a jour."""
+    """Cree la fiche artisan si elle n'existe pas, sinon la met a jour.
+    ville_base = ville de reference du secteur d'intervention.
+    rayon_km = rayon d'intervention en kilometres autour de cette ville."""
     conn = get_connection()
     cur = conn.cursor()
     email = email.strip().lower()
@@ -81,19 +92,19 @@ def upsert_artisan(email, nom_entreprise, telephone, ville_base, zones_desservie
     if existing:
         cur.execute("""
             UPDATE artisans
-            SET nom_entreprise=?, telephone=?, ville_base=?, zones_desservies=?,
+            SET nom_entreprise=?, telephone=?, ville_base=?, rayon_km=?,
                 corps_metier=?, description=?, photos=?
             WHERE email=?
-        """, (nom_entreprise, telephone, ville_base, zones_desservies,
+        """, (nom_entreprise, telephone, ville_base, rayon_km,
               corps_metier_str, description, photos_str, email))
         artisan_id = existing["id"]
     else:
         cur.execute("""
             INSERT INTO artisans
-                (email, nom_entreprise, telephone, ville_base, zones_desservies,
+                (email, nom_entreprise, telephone, ville_base, rayon_km,
                  corps_metier, description, photos, date_creation)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (email, nom_entreprise, telephone, ville_base, zones_desservies,
+        """, (email, nom_entreprise, telephone, ville_base, rayon_km,
               corps_metier_str, description, photos_str, datetime.now().isoformat()))
         artisan_id = cur.lastrowid
 
@@ -137,3 +148,4 @@ def get_all_artisans():
     rows = cur.fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
