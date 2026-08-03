@@ -6,7 +6,6 @@ import base64
 import io
 from PIL import Image
 from anthropic import Anthropic
-from calcul_devis import calculer_devis  # Assure-toi que cette fonction existe dans ton calcul_devis.py
 from export_pdf import generer_pdf       # Assure-toi que cette fonction existe dans ton export_pdf.py
 from prompts import SYSTEM_PROMPT        # Assure-toi que SYSTEM_PROMPT est défini
 from db import init_db, get_all_artisans, get_indisponibilites
@@ -661,3 +660,4 @@ if st.session_state.get("analyse_effectuee"):
             file_name="devis_estimation_travaux.pdf",
             mime="application/pdf"
         )
+
