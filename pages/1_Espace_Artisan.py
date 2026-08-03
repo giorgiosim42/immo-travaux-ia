@@ -20,6 +20,8 @@ init_db()
 UPLOAD_DIR = "uploads_artisans"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+JOURS_SEMAINE = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+
 
 @st.cache_data
 def charger_corps_metier():
@@ -88,16 +90,29 @@ with st.form("form_profil_artisan"):
         "Telephone de contact",
         value=(artisan.get("telephone") or "") if artisan else ""
     )
-    ville_base = st.text_input(
-        "Ville de base",
-        value=(artisan.get("ville_base") or "") if artisan else "",
-        placeholder="ex : Lyon"
-    )
-    zones_desservies = st.text_area(
-        "Zones / villes ou vous intervenez (separees par des virgules)",
-        value=(artisan.get("zones_desservies") or "") if artisan else "",
-        placeholder="ex : Lyon, Villeurbanne, Venissieux, Bron"
-    )
+
+    st.markdown("**Secteur geographique d'intervention**")
+    col_ville, col_rayon = st.columns([1, 2])
+    with col_ville:
+        ville_centre = st.text_input(
+            "Ville de reference (centre de votre secteur)",
+            value=(artisan.get("ville_base") or "") if artisan else "",
+            placeholder="ex : Lyon"
+        )
+    with col_rayon:
+        rayon_defaut = 20
+        if artisan and artisan.get("rayon_km"):
+            rayon_defaut = int(artisan["rayon_km"])
+        rayon_km = st.slider(
+            "Rayon d'intervention autour de cette ville (km)",
+            min_value=5,
+            max_value=100,
+            value=rayon_defaut,
+            step=5,
+            help="Vous serez propose aux clients situes dans ce rayon autour de votre ville de reference."
+        )
+    if ville_centre.strip():
+        st.caption(f"Vous intervenez dans un rayon de {rayon_km} km autour de {ville_centre.strip()}.")
 
     corps_metier_defaut = []
     if artisan and artisan.get("corps_metier"):
@@ -125,8 +140,8 @@ with st.form("form_profil_artisan"):
     submit = st.form_submit_button("Enregistrer ma fiche", type="primary")
 
     if submit:
-        if not nom_entreprise.strip() or not telephone.strip() or not ville_base.strip():
-            st.error("Merci de renseigner au minimum le nom, le telephone et la ville de base.")
+        if not nom_entreprise.strip() or not telephone.strip() or not ville_centre.strip():
+            st.error("Merci de renseigner au minimum le nom, le telephone et la ville de reference.")
         elif not corps_metier_selectionnes:
             st.error("Merci de selectionner au moins un corps de metier.")
         else:
@@ -150,8 +165,8 @@ with st.form("form_profil_artisan"):
                 email=email_connecte,
                 nom_entreprise=nom_entreprise.strip(),
                 telephone=telephone.strip(),
-                ville_base=ville_base.strip(),
-                zones_desservies=zones_desservies.strip(),
+                ville_base=ville_centre.strip(),
+                rayon_km=rayon_km,
                 corps_metier_list=corps_metier_selectionnes,
                 description=description.strip(),
                 photos_paths=chemins_photos
@@ -171,15 +186,15 @@ if artisan and artisan.get("nom_entreprise"):
         photos_liste = [p for p in (artisan.get("photos") or "").split(",") if p and os.path.exists(p)]
         if photos_liste:
             for chemin_photo in photos_liste[:3]:
-                st.image(chemin_photo, use_column_width=True)
+                st.image(chemin_photo, width="stretch")
         else:
             st.caption("Aucune photo ajoutee pour le moment.")
 
     with col_infos:
         st.markdown(f"### {artisan['nom_entreprise']}")
         st.write(f"Tel : {artisan['telephone']}")
-        st.write(f"Base a : {artisan['ville_base']}")
-        st.write(f"Intervient a : {artisan['zones_desservies']}")
+        rayon_affiche = artisan.get("rayon_km") or 20
+        st.write(f"Secteur : rayon de {rayon_affiche} km autour de {artisan['ville_base']}")
         corps_affichage = (artisan.get("corps_metier") or "").replace(",", ", ")
         st.write(f"Corps de metier : {corps_affichage}")
         st.write(artisan.get("description") or "")
@@ -189,32 +204,55 @@ if artisan and artisan.get("nom_entreprise"):
     st.subheader("Votre planning (visible uniquement par vous)")
     st.caption(
         "Cochez les jours ou vous n'etes PAS disponible. "
-        "Par defaut, tous les jours sont consideres comme disponibles."
+        "Par defaut, tous les jours a venir sont consideres comme disponibles."
+    )
+
+    nb_semaines = st.select_slider(
+        "Nombre de semaines a afficher",
+        options=[2, 4, 6, 8],
+        value=4
     )
 
     jours_indispo_actuels = set(get_indisponibilites(artisan["id"]))
+    nouvelles_indispo = set(jours_indispo_actuels)  # on part de l'existant, on ne modifie que les jours affiches
 
-    horizon_jours = 30
     aujourd_hui = date.today()
-    dates_horizon = [aujourd_hui + timedelta(days=i) for i in range(horizon_jours)]
+    lundi_semaine_courante = aujourd_hui - timedelta(days=aujourd_hui.weekday())
 
-    nouvelles_indispo = set()
-    nb_colonnes = 7
-    for semaine_debut in range(0, horizon_jours, nb_colonnes):
-        colonnes = st.columns(nb_colonnes)
-        for offset, col in enumerate(colonnes):
-            idx = semaine_debut + offset
-            if idx >= len(dates_horizon):
-                continue
-            jour = dates_horizon[idx]
+    for semaine in range(nb_semaines):
+        lundi = lundi_semaine_courante + timedelta(weeks=semaine)
+        dimanche = lundi + timedelta(days=6)
+
+        prefixe_semaine = "Cette semaine" if semaine == 0 else f"Semaine {semaine + 1}"
+        st.markdown(f"**{prefixe_semaine} - du {lundi.strftime('%d/%m')} au {dimanche.strftime('%d/%m')}**")
+
+        colonnes = st.columns(7)
+        for i, col in enumerate(colonnes):
+            jour = lundi + timedelta(days=i)
             jour_str = jour.isoformat()
-            coche = col.checkbox(
-                jour.strftime("%d/%m"),
-                value=(jour_str in jours_indispo_actuels),
-                key=f"indispo_{jour_str}"
-            )
-            if coche:
-                nouvelles_indispo.add(jour_str)
+            est_aujourd_hui = (jour == aujourd_hui)
+            est_passe = jour < aujourd_hui
+
+            label_jour = f"{JOURS_SEMAINE[i]} {jour.strftime('%d/%m')}"
+            if est_aujourd_hui:
+                label_jour = f"\U0001F535 {label_jour}"
+
+            with col:
+                if est_passe:
+                    st.caption(label_jour)
+                    st.caption("(passe)")
+                else:
+                    coche = st.checkbox(
+                        label_jour,
+                        value=(jour_str in jours_indispo_actuels),
+                        key=f"indispo_{jour_str}"
+                    )
+                    if coche:
+                        nouvelles_indispo.add(jour_str)
+                    else:
+                        nouvelles_indispo.discard(jour_str)
+
+        st.markdown("")  # petit espacement entre les semaines
 
     if st.button("Enregistrer mon planning", type="primary"):
         set_indisponibilites(artisan["id"], sorted(nouvelles_indispo))
@@ -222,3 +260,4 @@ if artisan and artisan.get("nom_entreprise"):
         st.rerun()
 else:
     st.info("Completez et enregistrez votre fiche ci-dessus pour acceder a votre planning.")
+
