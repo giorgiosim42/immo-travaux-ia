@@ -22,6 +22,16 @@ UPLOAD_DIR = "uploads_artisans"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 JOURS_SEMAINE = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+MOIS_FR = [
+    "Janvier", "Fevrier", "Mars", "Avril", "Mai", "Juin",
+    "Juillet", "Aout", "Septembre", "Octobre", "Novembre", "Decembre"
+]
+
+
+def ajouter_mois(annee, mois, delta):
+    """Retourne (annee, mois) apres avoir ajoute delta mois a (annee, mois)."""
+    total = (annee * 12 + (mois - 1)) + delta
+    return total // 12, total % 12 + 1
 
 
 @st.cache_data
@@ -29,6 +39,7 @@ def charger_corps_metier():
     with open("base_prix_travaux.json", "r", encoding="utf-8") as f:
         data = json.load(f)
     return [cat["nom_categorie"] for cat in data["categories_travaux"]]
+
 
 
 CORPS_METIER = charger_corps_metier()
@@ -89,8 +100,10 @@ with st.form("form_profil_artisan"):
     )
     telephone = st.text_input(
         "Telephone de contact",
-        value=(artisan.get("telephone") or "") if artisan else ""
+        value=(artisan.get("telephone") or "") if artisan else "",
+        help="Ce numero sera visible publiquement par tous les visiteurs du site."
     )
+    st.caption("\u26A0\uFE0F Ce numero sera visible par tous les clients sur le site (fiche publique).")
 
     st.markdown("**Secteur geographique d'intervention**")
     col_ville, col_rayon = st.columns([1, 2])
@@ -208,101 +221,128 @@ if artisan and artisan.get("nom_entreprise"):
         "Par defaut, tous les jours a venir sont consideres comme disponibles."
     )
 
-    nb_semaines = st.select_slider(
-        "Nombre de semaines a afficher",
-        options=[2, 4, 6, 8],
-        value=4
+    aujourd_hui = date.today()
+
+    # Les 12 prochains mois a partir du mois courant (peu importe quand on consulte la page)
+    options_mois = [ajouter_mois(aujourd_hui.year, aujourd_hui.month, k) for k in range(12)]
+    mois_selectionne = st.selectbox(
+        "Mois a afficher",
+        options=options_mois,
+        format_func=lambda am: f"{MOIS_FR[am[1] - 1]} {am[0]}"
     )
+    annee_sel, mois_sel = mois_selectionne
+
+    premier_jour_mois = date(annee_sel, mois_sel, 1)
+    annee_mois_suiv, mois_suiv = ajouter_mois(annee_sel, mois_sel, 1)
+    dernier_jour_mois = date(annee_mois_suiv, mois_suiv, 1) - timedelta(days=1)
+
+    # Grille calendaire complete (semaines entieres, du lundi au dimanche)
+    lundi_debut_grille = premier_jour_mois - timedelta(days=premier_jour_mois.weekday())
+    dimanche_fin_grille = dernier_jour_mois + timedelta(days=(6 - dernier_jour_mois.weekday()))
+    nb_semaines_affichees = ((dimanche_fin_grille - lundi_debut_grille).days + 1) // 7
 
     jours_indispo_actuels = set(get_indisponibilites(artisan["id"]))
     nouvelles_indispo = set(jours_indispo_actuels)  # on part de l'existant, on ne modifie que les jours affiches
 
-    aujourd_hui = date.today()
-    lundi_semaine_courante = aujourd_hui - timedelta(days=aujourd_hui.weekday())
-    horizon_derniere_semaine = lundi_semaine_courante + timedelta(weeks=nb_semaines - 1, days=6)
-
-    # Jours feries francais sur toute la periode affichee (gere automatiquement
-    # le changement d'annee si l'horizon le traverse)
-    annees_concernees = list(range(aujourd_hui.year, horizon_derniere_semaine.year + 1))
+    # Jours feries francais sur toute la periode affichee (gere le changement d'annee)
+    annees_concernees = list(range(lundi_debut_grille.year, dimanche_fin_grille.year + 1))
     jours_feries = holidays.France(years=annees_concernees)
 
-    # --- Style "calendrier Outlook" : cellules bordees, weekends et feries grises ---
+    # --- Style "calendrier Outlook" : cellules bordees, weekends/feries grises,
+    # + fond alterne par semaine pour separer visuellement les lignes ---
     cles_a_griser = []
-    for semaine in range(nb_semaines):
-        lundi = lundi_semaine_courante + timedelta(weeks=semaine)
+    regles_fond_semaine = []
+    for semaine in range(nb_semaines_affichees):
+        lundi = lundi_debut_grille + timedelta(weeks=semaine)
         for i in range(7):
             jour = lundi + timedelta(days=i)
             if jour.weekday() >= 5 or jour in jours_feries:
                 cles_a_griser.append(f"cellule_{jour.isoformat()}")
 
-    regles_css = "\n".join(
-        f".st-key-{cle} {{ background-color: rgba(120, 120, 120, 0.08) !important; "
+        couleur_fond = "rgba(37, 99, 235, 0.05)" if semaine % 2 == 0 else "rgba(16, 185, 129, 0.05)"
+        regles_fond_semaine.append(
+            f".st-key-semaine_{semaine} {{ background-color: {couleur_fond}; "
+            f"border-radius: 10px; padding: 8px; }}"
+        )
+
+    regles_grisage = "\n".join(
+        f".st-key-{cle} {{ background-color: rgba(120, 120, 120, 0.12) !important; "
         f"border-radius: 6px; }}"
         for cle in cles_a_griser
     )
-    st.html(f"<style>\n{regles_css}\n.st-key-cellule_{aujourd_hui.isoformat()} "
-            f"{{ border: 2px solid #2563eb !important; }}\n</style>")
+    st.html(
+        "<style>\n"
+        + "\n".join(regles_fond_semaine) + "\n"
+        + regles_grisage + "\n"
+        + f".st-key-cellule_{aujourd_hui.isoformat()} {{ border: 2px solid #2563eb !important; }}\n"
+        + "</style>"
+    )
 
-    for semaine in range(nb_semaines):
-        lundi = lundi_semaine_courante + timedelta(weeks=semaine)
+    for semaine in range(nb_semaines_affichees):
+        lundi = lundi_debut_grille + timedelta(weeks=semaine)
         dimanche = lundi + timedelta(days=6)
         numero_semaine_iso = lundi.isocalendar()[1]
 
-        suffixe = " (cette semaine)" if semaine == 0 else ""
-        st.markdown(
-            f"#### Semaine {numero_semaine_iso}{suffixe} "
-            f"<span style='color:#888; font-weight:normal; font-size:0.9em;'>"
-            f"&nbsp;&mdash;&nbsp;du {lundi.strftime('%d/%m')} au {dimanche.strftime('%d/%m')}</span>",
-            unsafe_allow_html=True
-        )
+        with st.container(key=f"semaine_{semaine}"):
+            suffixe = " (cette semaine)" if lundi <= aujourd_hui <= dimanche else ""
+            st.markdown(
+                f"#### Semaine {numero_semaine_iso}{suffixe} "
+                f"<span style='color:#888; font-weight:normal; font-size:0.9em;'>"
+                f"&nbsp;&mdash;&nbsp;du {lundi.strftime('%d/%m')} au {dimanche.strftime('%d/%m')}</span>",
+                unsafe_allow_html=True
+            )
 
-        colonnes = st.columns(7)
-        for i, col in enumerate(colonnes):
-            jour = lundi + timedelta(days=i)
-            jour_str = jour.isoformat()
-            est_aujourd_hui = (jour == aujourd_hui)
-            est_passe = jour < aujourd_hui
-            est_weekend = jour.weekday() >= 5
-            nom_ferie = jours_feries.get(jour)
+            colonnes = st.columns(7)
+            for i, col in enumerate(colonnes):
+                jour = lundi + timedelta(days=i)
+                jour_str = jour.isoformat()
+                est_aujourd_hui = (jour == aujourd_hui)
+                est_passe = jour < aujourd_hui
+                est_weekend = jour.weekday() >= 5
+                est_hors_mois = jour.month != mois_sel
+                nom_ferie = jours_feries.get(jour)
 
-            with col:
-                with st.container(border=True, key=f"cellule_{jour_str}"):
-                    couleur_texte = "#999" if (est_weekend or nom_ferie) else "inherit"
-                    st.markdown(
-                        f"<div style='text-align:center; color:{couleur_texte};'>"
-                        f"<b>{JOURS_SEMAINE[i]}</b><br>{jour.strftime('%d/%m')}</div>",
-                        unsafe_allow_html=True
-                    )
-
-                    if est_aujourd_hui:
+                with col:
+                    with st.container(border=True, key=f"cellule_{jour_str}"):
+                        couleur_texte = "#999" if (est_weekend or nom_ferie or est_hors_mois) else "inherit"
                         st.markdown(
-                            "<div style='text-align:center; color:#2563eb; font-size:0.75em;'>"
-                            "Aujourd'hui</div>",
-                            unsafe_allow_html=True
-                        )
-                    if nom_ferie:
-                        st.markdown(
-                            f"<div style='text-align:center; color:#b45309; font-size:0.75em;'>"
-                            f"Ferie : {nom_ferie}</div>",
+                            f"<div style='text-align:center; color:{couleur_texte};'>"
+                            f"<b>{JOURS_SEMAINE[i]}</b><br>{jour.strftime('%d/%m')}</div>",
                             unsafe_allow_html=True
                         )
 
-                    if est_passe:
-                        st.caption("(passe)")
-                    else:
-                        coche = st.checkbox(
-                            "Indisponible",
-                            value=(jour_str in jours_indispo_actuels),
-                            key=f"indispo_{jour_str}"
-                        )
-                        if coche:
-                            nouvelles_indispo.add(jour_str)
+                        if est_aujourd_hui:
+                            st.markdown(
+                                "<div style='text-align:center; color:#2563eb; font-size:0.75em;'>"
+                                "Aujourd'hui</div>",
+                                unsafe_allow_html=True
+                            )
+                        if nom_ferie:
+                            st.markdown(
+                                f"<div style='text-align:center; color:#b45309; font-size:0.75em;'>"
+                                f"Ferie : {nom_ferie}</div>",
+                                unsafe_allow_html=True
+                            )
+
+                        if est_passe:
+                            st.caption("(passe)")
                         else:
-                            nouvelles_indispo.discard(jour_str)
+                            coche = st.checkbox(
+                                "Indisponible",
+                                value=(jour_str in jours_indispo_actuels),
+                                key=f"indispo_{jour_str}"
+                            )
+                            if coche:
+                                nouvelles_indispo.add(jour_str)
+                            else:
+                                nouvelles_indispo.discard(jour_str)
 
         st.markdown("")  # petit espacement entre les semaines
 
-    st.caption("Cases grisees = weekend ou jour ferie. Cadre bleu = aujourd'hui.")
+    st.caption(
+        "Cases grisees = weekend, jour ferie, ou jour hors du mois affiche. "
+        "Cadre bleu = aujourd'hui. Les bandes de couleur alternent pour separer les semaines."
+    )
 
     if st.button("Enregistrer mon planning", type="primary"):
         set_indisponibilites(artisan["id"], sorted(nouvelles_indispo))
@@ -310,3 +350,4 @@ if artisan and artisan.get("nom_entreprise"):
         st.rerun()
 else:
     st.info("Completez et enregistrez votre fiche ci-dessus pour acceder a votre planning.")
+
