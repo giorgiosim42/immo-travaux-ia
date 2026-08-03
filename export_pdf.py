@@ -13,19 +13,27 @@ def generer_pdf(
     taux_tva: float = None,
     montant_tva: float = None,
     total_ttc: float = None,
+    reference: str = None,
 ) -> bytes:
-    """Genere le PDF du devis. Les parametres taux_tva / montant_tva / total_ttc sont
-    optionnels : s'ils ne sont pas fournis, le PDF n'affiche que le total HT (ancien
-    comportement, conserve pour compatibilite)."""
+    """Genere le PDF du devis. taux_tva / montant_tva / total_ttc / reference sont
+    optionnels : s'ils ne sont pas fournis, le PDF garde son comportement d'origine
+    (total HT uniquement, pas de reference affichee)."""
+    # Palette "Carnet de chantier" (coherente avec style.py / .streamlit/config.toml)
+    BLEU_PLAN = (27, 58, 107)
+
     pdf = FPDF()
     pdf.add_page()
 
     # --- Entete ---
     pdf.set_font("Helvetica", "B", 16)
+    pdf.set_text_color(*BLEU_PLAN)
     pdf.cell(0, 10, "Devis Estimatif de Travaux - IA Immo", new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(120, 120, 120)
-    pdf.cell(0, 6, f"Genere le {datetime.now().strftime('%d/%m/%Y')}", new_x="LMARGIN", new_y="NEXT", align="C")
+    ligne_meta = f"Genere le {datetime.now().strftime('%d/%m/%Y')}"
+    if reference:
+        ligne_meta += f"   -   Reference : {reference}"
+    pdf.cell(0, 6, ligne_meta, new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.set_text_color(0, 0, 0)
     pdf.ln(6)
 
@@ -65,8 +73,10 @@ def generer_pdf(
 
         # --- Bandeau de categorie ---
         pdf.set_font("Helvetica", "B", 11)
-        pdf.set_fill_color(210, 225, 245)
+        pdf.set_fill_color(222, 231, 240)
+        pdf.set_text_color(*BLEU_PLAN)
         pdf.cell(0, 8, str(categorie), border=0, fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
         pdf.ln(1)
 
         entete_tableau()
@@ -117,15 +127,19 @@ def generer_pdf(
         pdf.cell(45, 7, f"{montant_tva:.2f} EUR", align="R", new_x="LMARGIN", new_y="NEXT")
 
         pdf.set_font("Helvetica", "B", 13)
-        pdf.set_fill_color(190, 215, 245)
+        pdf.set_fill_color(*BLEU_PLAN)
+        pdf.set_text_color(255, 255, 255)
         pdf.cell(140, 10, "TOTAL GENERAL TTC :", align="R", fill=True)
         pdf.cell(45, 10, f"{total_ttc:.2f} EUR", align="R", fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
     else:
         # Ancien comportement : un seul total HT mis en avant (aucune donnee TVA fournie)
         pdf.set_font("Helvetica", "B", 12)
-        pdf.set_fill_color(210, 225, 245)
+        pdf.set_fill_color(*BLEU_PLAN)
+        pdf.set_text_color(255, 255, 255)
         pdf.cell(140, 9, "TOTAL GENERAL ESTIMATION HT :", align="R", fill=True)
         pdf.cell(45, 9, f"{total:.2f} EUR", align="R", fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
 
     pdf.ln(6)
     pdf.set_font("Helvetica", "I", 8)
