@@ -4,20 +4,30 @@ import json
 import os
 import base64
 import io
+from datetime import date
+from uuid import uuid4
 from PIL import Image
 from anthropic import Anthropic
 from export_pdf import generer_pdf       # Assure-toi que cette fonction existe dans ton export_pdf.py
 from prompts import SYSTEM_PROMPT        # Assure-toi que SYSTEM_PROMPT est défini
 from db import init_db, get_all_artisans, get_indisponibilites
 from matching import trouver_artisans_correspondants
+from style import appliquer_style, cartouche
 import plotly.express as px
 
 st.set_page_config(page_title="IA Immo - Estimation Travaux", page_icon="🏗️", layout="wide")
 
+appliquer_style()
 init_db()
 
-st.title("🏗️ Estimation IA de Travaux Immo")
-st.markdown("Téléversez les photos d'une pièce et obtenez une estimation financière détaillée et ajustable.")
+if "reference_devis" not in st.session_state:
+    st.session_state["reference_devis"] = f"DEV-{date.today().strftime('%Y%m%d')}-{uuid4().hex[:4].upper()}"
+
+cartouche(
+    "Estimation IA de Travaux",
+    "Téléversez les photos d'une pièce et obtenez une estimation chiffrée, ajustable poste par poste.",
+    reference=st.session_state["reference_devis"]
+)
 
 
 # --- FONCTIONS UTILITAIRES ---
@@ -652,7 +662,8 @@ if st.session_state.get("analyse_effectuee"):
     if st.button("📥 Télécharger le Devis au format PDF"):
         pdf_bytes = generer_pdf(
             df_devis, sous_total_ht, montant_imponderables, total_general_ht, marge_pct,
-            taux_tva=taux_tva, montant_tva=montant_tva, total_ttc=total_general_ttc
+            taux_tva=taux_tva, montant_tva=montant_tva, total_ttc=total_general_ttc,
+            reference=st.session_state["reference_devis"]
         )
         st.download_button(
             label="Clic ici pour enregistrer le PDF",
@@ -660,4 +671,3 @@ if st.session_state.get("analyse_effectuee"):
             file_name="devis_estimation_travaux.pdf",
             mime="application/pdf"
         )
-
