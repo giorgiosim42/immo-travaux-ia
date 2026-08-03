@@ -13,9 +13,11 @@ from db import (
     get_indisponibilites,
     set_indisponibilites,
 )
+from style import appliquer_style, cartouche, ORANGE_CHANTIER
 
 st.set_page_config(page_title="Espace Artisan - IA Immo", page_icon="\U0001F477", layout="wide")
 
+appliquer_style()
 init_db()
 
 UPLOAD_DIR = "uploads_artisans"
@@ -44,7 +46,10 @@ def charger_corps_metier():
 
 CORPS_METIER = charger_corps_metier()
 
-st.title("\U0001F477 Espace Artisan")
+cartouche(
+    "Espace Artisan",
+    "Créez votre fiche publique, définissez votre secteur d'intervention et gérez votre planning."
+)
 
 st.warning(
     "Version prototype de demonstration : la connexion se fait uniquement par email, "
@@ -195,23 +200,24 @@ if artisan and artisan.get("nom_entreprise"):
     st.markdown("---")
     st.subheader("Apercu de votre fiche publique")
 
-    col_photos, col_infos = st.columns([1, 2])
-    with col_photos:
-        photos_liste = [p for p in (artisan.get("photos") or "").split(",") if p and os.path.exists(p)]
-        if photos_liste:
-            for chemin_photo in photos_liste[:3]:
-                st.image(chemin_photo, width="stretch")
-        else:
-            st.caption("Aucune photo ajoutee pour le moment.")
+    with st.container(border=True):
+        col_photos, col_infos = st.columns([1, 2])
+        with col_photos:
+            photos_liste = [p for p in (artisan.get("photos") or "").split(",") if p and os.path.exists(p)]
+            if photos_liste:
+                for chemin_photo in photos_liste[:3]:
+                    st.image(chemin_photo, width="stretch")
+            else:
+                st.caption("Aucune photo ajoutee pour le moment.")
 
-    with col_infos:
-        st.markdown(f"### {artisan['nom_entreprise']}")
-        st.write(f"Tel : {artisan['telephone']}")
-        rayon_affiche = artisan.get("rayon_km") or 20
-        st.write(f"Secteur : rayon de {rayon_affiche} km autour de {artisan['ville_base']}")
-        corps_affichage = (artisan.get("corps_metier") or "").replace(",", ", ")
-        st.write(f"Corps de metier : {corps_affichage}")
-        st.write(artisan.get("description") or "")
+        with col_infos:
+            st.markdown(f"### {artisan['nom_entreprise']}")
+            st.write(f"Tel : {artisan['telephone']}")
+            rayon_affiche = artisan.get("rayon_km") or 20
+            st.write(f"Secteur : rayon de {rayon_affiche} km autour de {artisan['ville_base']}")
+            corps_affichage = (artisan.get("corps_metier") or "").replace(",", ", ")
+            st.write(f"Corps de metier : {corps_affichage}")
+            st.write(artisan.get("description") or "")
 
     # --- PLANNING / DISPONIBILITES (visible uniquement par l'artisan connecte) ---
     st.markdown("---")
@@ -248,8 +254,8 @@ if artisan and artisan.get("nom_entreprise"):
     annees_concernees = list(range(lundi_debut_grille.year, dimanche_fin_grille.year + 1))
     jours_feries = holidays.France(years=annees_concernees)
 
-    # --- Style "calendrier Outlook" : cellules bordees, weekends/feries grises,
-    # + fond alterne par semaine pour separer visuellement les lignes ---
+    # --- Style "carnet de chantier" : cellules bordees bleu plan, weekends/feries grises,
+    # + fond alterne par semaine (bleu plan / bleu calque), aujourd'hui en orange chantier ---
     cles_a_griser = []
     regles_fond_semaine = []
     for semaine in range(nb_semaines_affichees):
@@ -259,22 +265,22 @@ if artisan and artisan.get("nom_entreprise"):
             if jour.weekday() >= 5 or jour in jours_feries:
                 cles_a_griser.append(f"cellule_{jour.isoformat()}")
 
-        couleur_fond = "rgba(37, 99, 235, 0.05)" if semaine % 2 == 0 else "rgba(16, 185, 129, 0.05)"
+        couleur_fond = "rgba(27, 58, 107, 0.05)" if semaine % 2 == 0 else "rgba(92, 137, 172, 0.07)"
         regles_fond_semaine.append(
             f".st-key-semaine_{semaine} {{ background-color: {couleur_fond}; "
-            f"border-radius: 10px; padding: 8px; }}"
+            f"border-radius: 4px; padding: 8px; }}"
         )
 
     regles_grisage = "\n".join(
         f".st-key-{cle} {{ background-color: rgba(120, 120, 120, 0.12) !important; "
-        f"border-radius: 6px; }}"
+        f"border-radius: 2px; }}"
         for cle in cles_a_griser
     )
     st.html(
         "<style>\n"
         + "\n".join(regles_fond_semaine) + "\n"
         + regles_grisage + "\n"
-        + f".st-key-cellule_{aujourd_hui.isoformat()} {{ border: 2px solid #2563eb !important; }}\n"
+        + f".st-key-cellule_{aujourd_hui.isoformat()} {{ border: 2px solid {ORANGE_CHANTIER} !important; }}\n"
         + "</style>"
     )
 
@@ -313,7 +319,7 @@ if artisan and artisan.get("nom_entreprise"):
 
                         if est_aujourd_hui:
                             st.markdown(
-                                "<div style='text-align:center; color:#2563eb; font-size:0.75em;'>"
+                                f"<div style='text-align:center; color:{ORANGE_CHANTIER}; font-size:0.75em;'>"
                                 "Aujourd'hui</div>",
                                 unsafe_allow_html=True
                             )
@@ -341,7 +347,7 @@ if artisan and artisan.get("nom_entreprise"):
 
     st.caption(
         "Cases grisees = weekend, jour ferie, ou jour hors du mois affiche. "
-        "Cadre bleu = aujourd'hui. Les bandes de couleur alternent pour separer les semaines."
+        "Cadre orange = aujourd'hui. Les bandes de couleur alternent pour separer les semaines."
     )
 
     if st.button("Enregistrer mon planning", type="primary"):
@@ -350,4 +356,3 @@ if artisan and artisan.get("nom_entreprise"):
         st.rerun()
 else:
     st.info("Completez et enregistrez votre fiche ci-dessus pour acceder a votre planning.")
-
