@@ -651,7 +651,10 @@ if st.session_state.get("analyse_effectuee"):
 
     # 7. Export PDF (uniquement les postes cochés "Inclure")
     if st.button("📥 Télécharger le Devis au format PDF"):
-        pdf_bytes = generer_pdf(df_devis, sous_total_ht, montant_imponderables, total_general_ht, marge_pct)
+        pdf_bytes = generer_pdf(
+            df_devis, sous_total_ht, montant_imponderables, total_general_ht, marge_pct,
+            taux_tva=taux_tva, montant_tva=montant_tva, total_ttc=total_general_ttc
+        )
         st.download_button(
             label="Clic ici pour enregistrer le PDF",
             data=pdf_bytes,
