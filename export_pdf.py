@@ -106,14 +106,13 @@ def generer_pdf(
         pdf.ln(4)
 
     # --- Totaux generaux ---
+    # NB : la marge de securite / impondérables (parametre `imponderables`) est deliberement
+    # non affichee ligne par ligne : elle est deja incluse dans `total` / `total_ttc`.
     tva_disponible = taux_tva is not None and montant_tva is not None and total_ttc is not None
 
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(140, 7, "Sous-total Travaux HT :", align="R")
     pdf.cell(45, 7, f"{sous_total:.2f} EUR", align="R", new_x="LMARGIN", new_y="NEXT")
-
-    pdf.cell(140, 7, f"Marge Imponderables / Securite ({marge_pct}%) :", align="R")
-    pdf.cell(45, 7, f"{imponderables:.2f} EUR", align="R", new_x="LMARGIN", new_y="NEXT")
 
     if tva_disponible:
         # Total HT en ligne intermediaire (non surlignee), la TTC devient le total final mis en avant
