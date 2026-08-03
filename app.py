@@ -9,9 +9,13 @@ from anthropic import Anthropic
 from calcul_devis import calculer_devis  # Assure-toi que cette fonction existe dans ton calcul_devis.py
 from export_pdf import generer_pdf       # Assure-toi que cette fonction existe dans ton export_pdf.py
 from prompts import SYSTEM_PROMPT        # Assure-toi que SYSTEM_PROMPT est défini
+from db import init_db, get_all_artisans, get_indisponibilites
+from matching import trouver_artisans_correspondants
 import plotly.express as px
 
 st.set_page_config(page_title="IA Immo - Estimation Travaux", page_icon="🏗️", layout="wide")
+
+init_db()
 
 st.title("🏗️ Estimation IA de Travaux Immo")
 st.markdown("Téléversez les photos d'une pièce et obtenez une estimation financière détaillée et ajustable.")
@@ -564,7 +568,56 @@ if st.session_state.get("analyse_effectuee"):
             fig.update_layout(showlegend=False, margin=dict(t=10, b=10, l=10, r=10), height=350)
             st.plotly_chart(fig, use_container_width=True)
 
-    # 6. Export PDF (uniquement les postes cochés "Inclure")
+    # 6. Mise en relation avec des artisans disponibles
+    st.markdown("---")
+    st.markdown("### 🤝 Artisans disponibles pour ce projet")
+
+    if not ville_bien.strip():
+        st.info(
+            "💡 Renseignez la ville du bien dans la barre latérale pour voir les artisans "
+            "disponibles près de chez vous."
+        )
+    else:
+        corps_metier_devis = set(df_devis["Catégorie"].unique())
+        tous_artisans = get_all_artisans()
+
+        with st.spinner("Recherche des artisans disponibles dans votre secteur..."):
+            artisans_matches = trouver_artisans_correspondants(
+                ville_client=ville_bien.strip(),
+                corps_metier_requis=corps_metier_devis,
+                tous_les_artisans=tous_artisans,
+                get_indisponibilites_fn=get_indisponibilites
+            )
+
+        if artisans_matches is None:
+            st.warning("⚠️ Impossible de localiser cette ville. Vérifiez l'orthographe.")
+        elif not artisans_matches:
+            st.info("📭 Aucun artisan disponible pour ces corps de métier dans votre secteur pour le moment.")
+        else:
+            st.caption(f"{len(artisans_matches)} artisan(s) trouvé(s), triés par proximité.")
+            for artisan in artisans_matches:
+                with st.container(border=True):
+                    col_info, col_contact = st.columns([3, 1])
+                    with col_info:
+                        st.markdown(
+                            f"**{artisan['nom_entreprise']}** — "
+                            f"{artisan['distance_km']} km de {ville_bien.strip()}"
+                        )
+                        corps_affiches = (artisan.get("corps_metier") or "").replace(",", ", ")
+                        st.caption(f"Corps de métier : {corps_affiches}")
+                        if artisan.get("description"):
+                            st.write(artisan["description"])
+                        if artisan["prochaine_disponibilite"]:
+                            st.write(
+                                f"📅 Prochaine disponibilité : "
+                                f"{artisan['prochaine_disponibilite'].strftime('%d/%m/%Y')}"
+                            )
+                        else:
+                            st.write("📅 Aucune disponibilité dans les 60 prochains jours.")
+                    with col_contact:
+                        st.write(f"📞 {artisan['telephone']}")
+
+    # 7. Export PDF (uniquement les postes cochés "Inclure")
     if st.button("📥 Télécharger le Devis au format PDF"):
         pdf_bytes = generer_pdf(df_devis, sous_total_ht, montant_imponderables, total_general_ht, marge_pct)
         st.download_button(
