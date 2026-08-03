@@ -1,0 +1,7 @@
+[theme]
+# Palette "Carnet de chantier"
+primaryColor = "#D9622B"            # orange chantier - boutons principaux, sliders, cases cochees
+backgroundColor = "#F3F5F2"         # papier technique - fond principal
+secondaryBackgroundColor = "#E7ECF1" # papier bleute - barre laterale, fond des widgets
+textColor = "#16202B"               # encre - texte principal
+font = "sans serif"                 # base de secours ; style.py charge IBM Plex par-dessus
