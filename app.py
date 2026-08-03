@@ -172,6 +172,28 @@ marge_pct = st.sidebar.slider(
     help="Pourcentage réservé aux imprévus de chantier (vices cachés, isolation, etc.)"
 )
 
+TAUX_TVA_OPTIONS = {
+    5.5: "5,5 % — Taux réduit (rénovation énergétique, logement > 2 ans)",
+    10: "10 % — Taux intermédiaire (rénovation courante, logement > 2 ans)",
+    20: "20 % — Taux normal (logement neuf/< 2 ans, ou travaux non éligibles)"
+}
+
+taux_tva = st.sidebar.selectbox(
+    "Taux de TVA applicable",
+    options=list(TAUX_TVA_OPTIONS.keys()),
+    index=1,  # 10 % par défaut : cas le plus courant en rénovation
+    format_func=lambda x: TAUX_TVA_OPTIONS[x],
+    help="Taux indicatif. L'éligibilité aux taux réduits (5,5 % / 10 %) dépend de la nature exacte "
+         "des travaux et de l'ancienneté du logement (> 2 ans), et doit être confirmée par l'artisan "
+         "au moment de la facturation (attestation de TVA à signer par le client)."
+)
+
+
+def format_taux(taux):
+    """Formate un taux (5.5, 10, 20) en notation française : '5,5', '10', '20'."""
+    return f"{taux:g}".replace(".", ",")
+
+
 # --- INFORMATIONS SUR LA PIÈCE (avant analyse) ---
 st.markdown("### 🚪 La pièce à analyser")
 col_piece, col_surface = st.columns(2)
@@ -521,6 +543,8 @@ if st.session_state.get("analyse_effectuee"):
 
     montant_imponderables = sous_total_ht * (marge_pct / 100.0)
     total_general_ht = sous_total_ht + montant_imponderables
+    montant_tva = total_general_ht * (taux_tva / 100.0)
+    total_general_ttc = total_general_ht + montant_tva
 
     # 4. Affichage des Métriques Financières (surface déjà saisie en haut de page)
     st.markdown("---")
@@ -530,7 +554,15 @@ if st.session_state.get("analyse_effectuee"):
     c1.metric("Sous-total Travaux (HT)", f"{sous_total_ht:,.2f} €".replace(",", " "))
     c2.metric(f"Sécurité & Impondérables ({marge_pct}%)", f"{montant_imponderables:,.2f} €".replace(",", " "))
     c3.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "), delta=f"{marge_pct}% marge incluse")
-    c4.metric("Prix au m²", f"{(total_general_ht / st.session_state.get('surface_piece', 15.0)):,.2f} €/m²".replace(",", " "))
+    c4.metric("Prix au m² (HT)", f"{(total_general_ht / st.session_state.get('surface_piece', 15.0)):,.2f} €/m²".replace(",", " "))
+
+    c5, c6 = st.columns(2)
+    c5.metric(f"Montant TVA ({format_taux(taux_tva)} %)", f"{montant_tva:,.2f} €".replace(",", " "))
+    c6.metric("TOTAL ESTIMÉ (TTC)", f"{total_general_ttc:,.2f} €".replace(",", " "), delta="TVA incluse")
+    st.caption(
+        f"💡 Taux de TVA appliqué : {format_taux(taux_tva)} % (modifiable dans la barre latérale). "
+        "Ce taux est indicatif et doit être confirmé par l'artisan au moment de la facturation."
+    )
 
     # 5. Ventilation par corps de métier (sous-totaux + camembert)
     if sous_total_ht > 0:
