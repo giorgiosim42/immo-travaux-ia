@@ -106,3 +106,4 @@ def generer_pdf(df_items: pd.DataFrame, sous_total: float, imponderables: float,
     )
 
     return bytes(pdf.output())
+
