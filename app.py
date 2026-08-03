@@ -4,7 +4,7 @@ import json
 import os
 import base64
 import io
-from datetime import date
+from datetime import date, timedelta
 from uuid import uuid4
 from PIL import Image
 from anthropic import Anthropic
@@ -172,30 +172,11 @@ gamme_prix = st.sidebar.select_slider(
     format_func=lambda x: x.capitalize()
 )
 
-marge_pct = st.sidebar.slider(
-    "Marge d'impondérables / Sécurité (%)",
-    min_value=5,
-    max_value=25,
-    value=10,
-    step=1,
-    help="Pourcentage réservé aux imprévus de chantier (vices cachés, isolation, etc.)"
-)
-
 TAUX_TVA_OPTIONS = {
     5.5: "5,5 % — Taux réduit (rénovation énergétique, logement > 2 ans)",
     10: "10 % — Taux intermédiaire (rénovation courante, logement > 2 ans)",
     20: "20 % — Taux normal (logement neuf/< 2 ans, ou travaux non éligibles)"
 }
-
-taux_tva = st.sidebar.selectbox(
-    "Taux de TVA applicable",
-    options=list(TAUX_TVA_OPTIONS.keys()),
-    index=1,  # 10 % par défaut : cas le plus courant en rénovation
-    format_func=lambda x: TAUX_TVA_OPTIONS[x],
-    help="Taux indicatif. L'éligibilité aux taux réduits (5,5 % / 10 %) dépend de la nature exacte "
-         "des travaux et de l'ancienneté du logement (> 2 ans), et doit être confirmée par l'artisan "
-         "au moment de la facturation (attestation de TVA à signer par le client)."
-)
 
 
 def format_taux(taux):
@@ -221,6 +202,26 @@ with col_surface:
         step=1.0,
         key="surface_piece"
     )
+
+st.markdown("### 🗓️ Quand souhaitez-vous réaliser ces travaux ?")
+col_date_debut, col_date_fin = st.columns(2)
+with col_date_debut:
+    date_debut_travaux = st.date_input(
+        "Date de début souhaitée",
+        value=date.today() + timedelta(days=14),
+        min_value=date.today(),
+        key="date_debut_travaux"
+    )
+with col_date_fin:
+    date_fin_travaux = st.date_input(
+        "Date de fin souhaitée (limite)",
+        value=st.session_state.get("date_debut_travaux", date.today() + timedelta(days=14)) + timedelta(days=30),
+        min_value=date_debut_travaux,
+        key="date_fin_travaux"
+    )
+st.caption(
+    "💡 Cette période sert à vérifier la disponibilité des artisans proposés plus bas dans le devis."
+)
 
 # --- ZONE UPLOAD PHOTOS ---
 uploaded_files = st.file_uploader(
@@ -286,7 +287,8 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
             system=SYSTEM_PROMPT,
             tools=[{
                 "name": "retour_analyse",
-                "description": "Retourne la liste structurée des travaux détectés sur les photos.",
+                "description": "Retourne la liste structurée des travaux détectés sur les photos, "
+                                "ainsi que la marge de sécurité recommandée.",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -305,9 +307,21 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
                                 },
                                 "required": ["id_poste", "explication", "quantite_estimee", "niveau_confiance"]
                             }
+                        },
+                        "marge_securite_pct": {
+                            "type": "number",
+                            "description": (
+                                "Pourcentage de marge de securite / impondérables a appliquer sur le "
+                                "sous-total HT, entre 5 et 25. Base ce pourcentage sur l'etat apparent "
+                                "du bien visible sur les photos, ton niveau de confiance global dans "
+                                "l'estimation, et le risque de travaux caches (installations anciennes, "
+                                "incertitude sur les surfaces ou l'etat sous les revetements, etc.). "
+                                "Une renovation legere et bien visible justifie une marge basse (5-10%), "
+                                "une renovation lourde ou incertaine justifie une marge plus elevee (15-25%)."
+                            )
                         }
                     },
-                    "required": ["postes_detectes"]
+                    "required": ["postes_detectes", "marge_securite_pct"]
                 }
             }],
             tool_choice={"type": "tool", "name": "retour_analyse"},
@@ -363,6 +377,17 @@ if st.button("🚀 Lancer l'analyse IA", type="primary", disabled=not uploaded_f
                 st.stop()
 
         st.session_state["data_ia"] = postes_valides
+
+        # Marge de sécurité calculée par l'IA (bornée par sécurité entre 5 et 25 %,
+        # avec repli sur 10 % si le modèle ne l'a pas renvoyée ou renvoie une valeur aberrante)
+        marge_ia_brute = data_ia.get("marge_securite_pct")
+        try:
+            marge_ia_validee = float(marge_ia_brute)
+            marge_ia_validee = max(5.0, min(25.0, marge_ia_validee))
+        except (TypeError, ValueError):
+            marge_ia_validee = 10.0
+        st.session_state["marge_pct"] = marge_ia_validee
+
         st.session_state["analyse_effectuee"] = True
         progress_bar.empty()
 
@@ -550,26 +575,38 @@ if st.session_state.get("analyse_effectuee"):
     if nb_exclus_checkbox > 0:
         st.caption(f"ℹ️ {nb_exclus_checkbox} poste(s) décoché(s), exclu(s) du calcul du devis.")
 
+    # Marge de sécurité estimée par l'IA lors de l'analyse (non affichée au client,
+    # mais bien incluse dans le total du devis) - repli à 10% par sécurité si absente.
+    marge_pct = st.session_state.get("marge_pct", 10.0)
     montant_imponderables = sous_total_ht * (marge_pct / 100.0)
     total_general_ht = sous_total_ht + montant_imponderables
-    montant_tva = total_general_ht * (taux_tva / 100.0)
-    total_general_ttc = total_general_ht + montant_tva
 
     # 4. Affichage des Métriques Financières (surface déjà saisie en haut de page)
     st.markdown("---")
     st.markdown("### 💰 Récapitulatif Financier")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Sous-total Travaux (HT)", f"{sous_total_ht:,.2f} €".replace(",", " "))
-    c2.metric(f"Sécurité & Impondérables ({marge_pct}%)", f"{montant_imponderables:,.2f} €".replace(",", " "))
-    c3.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "), delta=f"{marge_pct}% marge incluse")
-    c4.metric("Prix au m² (HT)", f"{(total_general_ht / st.session_state.get('surface_piece', 15.0)):,.2f} €/m²".replace(",", " "))
+    taux_tva = st.selectbox(
+        "Taux de TVA applicable",
+        options=list(TAUX_TVA_OPTIONS.keys()),
+        index=1,  # 10 % par défaut : cas le plus courant en rénovation
+        format_func=lambda x: TAUX_TVA_OPTIONS[x],
+        help="Taux indicatif. L'éligibilité aux taux réduits (5,5 % / 10 %) dépend de la nature exacte "
+             "des travaux et de l'ancienneté du logement (> 2 ans), et doit être confirmée par l'artisan "
+             "au moment de la facturation (attestation de TVA à signer par le client)."
+    )
+    montant_tva = total_general_ht * (taux_tva / 100.0)
+    total_general_ttc = total_general_ht + montant_tva
 
-    c5, c6 = st.columns(2)
-    c5.metric(f"Montant TVA ({format_taux(taux_tva)} %)", f"{montant_tva:,.2f} €".replace(",", " "))
-    c6.metric("TOTAL ESTIMÉ (TTC)", f"{total_general_ttc:,.2f} €".replace(",", " "), delta="TVA incluse")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Sous-total Travaux (HT)", f"{sous_total_ht:,.2f} €".replace(",", " "))
+    c2.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "))
+    c3.metric("Prix au m² (HT)", f"{(total_general_ht / st.session_state.get('surface_piece', 15.0)):,.2f} €/m²".replace(",", " "))
+
+    c4, c5 = st.columns(2)
+    c4.metric(f"Montant TVA ({format_taux(taux_tva)} %)", f"{montant_tva:,.2f} €".replace(",", " "))
+    c5.metric("TOTAL ESTIMÉ (TTC)", f"{total_general_ttc:,.2f} €".replace(",", " "), delta="TVA incluse")
     st.caption(
-        f"💡 Taux de TVA appliqué : {format_taux(taux_tva)} % (modifiable dans la barre latérale). "
+        f"💡 Taux de TVA appliqué : {format_taux(taux_tva)} %. "
         "Ce taux est indicatif et doit être confirmé par l'artisan au moment de la facturation."
     )
 
@@ -627,7 +664,9 @@ if st.session_state.get("analyse_effectuee"):
                 ville_client=ville_bien.strip(),
                 corps_metier_requis=corps_metier_devis,
                 tous_les_artisans=tous_artisans,
-                get_indisponibilites_fn=get_indisponibilites
+                get_indisponibilites_fn=get_indisponibilites,
+                date_debut=date_debut_travaux,
+                date_fin=date_fin_travaux
             )
 
         if artisans_matches is None:
@@ -635,7 +674,11 @@ if st.session_state.get("analyse_effectuee"):
         elif not artisans_matches:
             st.info("📭 Aucun artisan disponible pour ces corps de métier dans votre secteur pour le moment.")
         else:
-            st.caption(f"{len(artisans_matches)} artisan(s) trouvé(s), triés par proximité.")
+            st.caption(
+                f"{len(artisans_matches)} artisan(s) trouvé(s), triés par proximité "
+                f"(période souhaitée : du {date_debut_travaux.strftime('%d/%m/%Y')} "
+                f"au {date_fin_travaux.strftime('%d/%m/%Y')})."
+            )
             for artisan in artisans_matches:
                 with st.container(border=True):
                     col_info, col_contact = st.columns([3, 1])
@@ -648,13 +691,18 @@ if st.session_state.get("analyse_effectuee"):
                         st.caption(f"Corps de métier : {corps_affiches}")
                         if artisan.get("description"):
                             st.write(artisan["description"])
-                        if artisan["prochaine_disponibilite"]:
+                        if artisan["disponible_periode_demandee"]:
                             st.write(
-                                f"📅 Prochaine disponibilité : "
-                                f"{artisan['prochaine_disponibilite'].strftime('%d/%m/%Y')}"
+                                f"✅ Disponible sur la période souhaitée "
+                                f"(dès le {artisan['prochaine_disponibilite'].strftime('%d/%m/%Y')})"
+                            )
+                        elif artisan["prochaine_disponibilite"]:
+                            st.write(
+                                f"⚠️ Pas de disponibilité sur la période demandée — "
+                                f"prochain créneau libre : {artisan['prochaine_disponibilite'].strftime('%d/%m/%Y')}"
                             )
                         else:
-                            st.write("📅 Aucune disponibilité dans les 60 prochains jours.")
+                            st.write("📅 Aucune disponibilité dans les 90 prochains jours.")
                     with col_contact:
                         st.write(f"📞 {artisan['telephone']}")
 
