@@ -4,7 +4,19 @@ import pandas as pd
 from datetime import datetime
 
 
-def generer_pdf(df_items: pd.DataFrame, sous_total: float, imponderables: float, total: float, marge_pct: int) -> bytes:
+def generer_pdf(
+    df_items: pd.DataFrame,
+    sous_total: float,
+    imponderables: float,
+    total: float,
+    marge_pct: int,
+    taux_tva: float = None,
+    montant_tva: float = None,
+    total_ttc: float = None,
+) -> bytes:
+    """Genere le PDF du devis. Les parametres taux_tva / montant_tva / total_ttc sont
+    optionnels : s'ils ne sont pas fournis, le PDF n'affiche que le total HT (ancien
+    comportement, conserve pour compatibilite)."""
     pdf = FPDF()
     pdf.add_page()
 
@@ -84,6 +96,8 @@ def generer_pdf(df_items: pd.DataFrame, sous_total: float, imponderables: float,
         pdf.ln(4)
 
     # --- Totaux generaux ---
+    tva_disponible = taux_tva is not None and montant_tva is not None and total_ttc is not None
+
     pdf.set_font("Helvetica", "B", 10)
     pdf.cell(140, 7, "Sous-total Travaux HT :", align="R")
     pdf.cell(45, 7, f"{sous_total:.2f} EUR", align="R", new_x="LMARGIN", new_y="NEXT")
@@ -91,19 +105,40 @@ def generer_pdf(df_items: pd.DataFrame, sous_total: float, imponderables: float,
     pdf.cell(140, 7, f"Marge Imponderables / Securite ({marge_pct}%) :", align="R")
     pdf.cell(45, 7, f"{imponderables:.2f} EUR", align="R", new_x="LMARGIN", new_y="NEXT")
 
-    pdf.set_font("Helvetica", "B", 12)
-    pdf.set_fill_color(210, 225, 245)
-    pdf.cell(140, 9, "TOTAL GENERAL ESTIMATION HT :", align="R", fill=True)
-    pdf.cell(45, 9, f"{total:.2f} EUR", align="R", fill=True, new_x="LMARGIN", new_y="NEXT")
+    if tva_disponible:
+        # Total HT en ligne intermediaire (non surlignee), la TTC devient le total final mis en avant
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.cell(140, 8, "TOTAL ESTIMATION HT :", align="R")
+        pdf.cell(45, 8, f"{total:.2f} EUR", align="R", new_x="LMARGIN", new_y="NEXT")
+
+        taux_str = f"{taux_tva:g}".replace(".", ",")
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(140, 7, f"TVA ({taux_str}%) :", align="R")
+        pdf.cell(45, 7, f"{montant_tva:.2f} EUR", align="R", new_x="LMARGIN", new_y="NEXT")
+
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_fill_color(190, 215, 245)
+        pdf.cell(140, 10, "TOTAL GENERAL TTC :", align="R", fill=True)
+        pdf.cell(45, 10, f"{total_ttc:.2f} EUR", align="R", fill=True, new_x="LMARGIN", new_y="NEXT")
+    else:
+        # Ancien comportement : un seul total HT mis en avant (aucune donnee TVA fournie)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_fill_color(210, 225, 245)
+        pdf.cell(140, 9, "TOTAL GENERAL ESTIMATION HT :", align="R", fill=True)
+        pdf.cell(45, 9, f"{total:.2f} EUR", align="R", fill=True, new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(6)
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(120, 120, 120)
-    pdf.multi_cell(
-        0, 5,
+    mention = (
         "Devis estimatif genere par intelligence artificielle a partir de photos. "
         "Les montants sont indicatifs et ne remplacent pas un devis contractuel etabli par un professionnel du batiment."
     )
+    if tva_disponible:
+        mention += (
+            " Le taux de TVA applique est indicatif ; son eligibilite doit etre confirmee "
+            "par l'artisan lors de la facturation (attestation de TVA)."
+        )
+    pdf.multi_cell(0, 5, mention)
 
     return bytes(pdf.output())
-
