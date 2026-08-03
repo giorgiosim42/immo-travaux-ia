@@ -60,16 +60,17 @@ def distance_km(lat1, lon1, lat2, lon2):
     return 2 * rayon_terre * math.asin(math.sqrt(a))
 
 
-def prochaine_disponibilite(indisponibilites, jours_max=60):
+def prochaine_disponibilite(indisponibilites, jours_max=90, a_partir_de=None):
     """Retourne la prochaine date (jour ouvre, non ferie, non indisponible)
-    a partir d'aujourd'hui, ou None si aucune trouvee dans les `jours_max` prochains jours.
+    a partir de `a_partir_de` (aujourd'hui par defaut), ou None si aucune trouvee
+    dans les `jours_max` prochains jours a partir de ce point de depart.
     `indisponibilites` : liste de chaines 'YYYY-MM-DD' (issue de get_indisponibilites)."""
     indispo_set = set(indisponibilites)
-    aujourd_hui = date.today()
-    jours_feries = holidays.France(years=[aujourd_hui.year, aujourd_hui.year + 1])
+    depart = a_partir_de or date.today()
+    jours_feries = holidays.France(years=[depart.year, depart.year + 1])
 
     for offset in range(jours_max):
-        jour = aujourd_hui + timedelta(days=offset)
+        jour = depart + timedelta(days=offset)
         if jour.weekday() >= 5:
             continue
         if jour in jours_feries:
@@ -80,7 +81,14 @@ def prochaine_disponibilite(indisponibilites, jours_max=60):
     return None
 
 
-def trouver_artisans_correspondants(ville_client, corps_metier_requis, tous_les_artisans, get_indisponibilites_fn):
+def trouver_artisans_correspondants(
+    ville_client,
+    corps_metier_requis,
+    tous_les_artisans,
+    get_indisponibilites_fn,
+    date_debut=None,
+    date_fin=None,
+):
     """
     Filtre et trie les artisans pertinents pour un client donne.
 
@@ -90,11 +98,17 @@ def trouver_artisans_correspondants(ville_client, corps_metier_requis, tous_les_
     - tous_les_artisans : liste de dicts, telle que retournee par db.get_all_artisans()
     - get_indisponibilites_fn : fonction(artisan_id) -> liste de dates indisponibles
       (typiquement db.get_indisponibilites)
+    - date_debut, date_fin : periode souhaitee par le client pour les travaux (objets date).
+      Si fournis, la recherche de disponibilite commence a date_debut, et chaque artisan
+      est marque "disponible sur la periode demandee" si son premier creneau libre tombe
+      entre date_debut et date_fin inclus. Les artisans disponibles sur la periode sont
+      remontes en tete de liste (a distance egale).
 
     Retourne :
     - None si la ville du client n'a pas pu etre geocodee
-    - sinon, une liste de dicts artisans enrichis avec "distance_km" et
-      "prochaine_disponibilite" (objet date ou None), triee par distance croissante
+    - sinon, une liste de dicts artisans enrichis avec "distance_km",
+      "prochaine_disponibilite" (objet date ou None) et "disponible_periode_demandee"
+      (bool, ou None si aucune periode n'a ete precisee), triee par pertinence
     """
     coords_client = geocoder_ville(ville_client)
     if coords_client is None:
@@ -121,12 +135,19 @@ def trouver_artisans_correspondants(ville_client, corps_metier_requis, tous_les_
             continue
 
         indispo = get_indisponibilites_fn(artisan["id"])
-        prochaine = prochaine_disponibilite(indispo)
+        prochaine = prochaine_disponibilite(indispo, a_partir_de=date_debut)
+
+        disponible_periode = None
+        if date_debut and date_fin:
+            disponible_periode = bool(prochaine and date_debut <= prochaine <= date_fin)
 
         artisan_enrichi = dict(artisan)
         artisan_enrichi["distance_km"] = round(distance, 1)
         artisan_enrichi["prochaine_disponibilite"] = prochaine
+        artisan_enrichi["disponible_periode_demandee"] = disponible_periode
         resultats.append(artisan_enrichi)
 
-    resultats.sort(key=lambda a: a["distance_km"])
+    # Tri : d'abord ceux disponibles sur la periode demandee (si une periode a ete precisee),
+    # puis par distance croissante
+    resultats.sort(key=lambda a: (not a["disponible_periode_demandee"], a["distance_km"]))
     return resultats
