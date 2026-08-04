@@ -117,6 +117,37 @@ def appliquer_style():
     )
 
 
+def total_devis(montant_ttc: float, mention: str = ""):
+    """Grand encadré mettant en avant LE chiffre qui compte pour le client : le total
+    TTC a payer. Les autres montants (HT, TVA...) doivent etre affiches a cote, en
+    texte normal, dans un bloc secondaire moins visible (voir un expander par exemple) -
+    pas dans des st.metric() qui leur donneraient le meme poids visuel que ce total."""
+    montant_fmt = f"{montant_ttc:,.2f} €".replace(",", " ")
+    mention_html = (
+        f'<div style="font-family:\'IBM Plex Sans\',sans-serif; font-size:0.85rem; '
+        f'color:{ENCRE}; opacity:0.65; margin-top:0.15rem;">{mention}</div>'
+        if mention else ""
+    )
+    st.markdown(
+        f"""
+        <div style="border: 2px solid {ORANGE_CHANTIER}; border-radius: 3px;
+                    background: rgba(217,98,43,0.05);
+                    padding: 1.1rem 1.5rem; text-align:center; margin: 0.4rem 0 1.1rem 0;">
+            <div style="font-family:'IBM Plex Sans Condensed',sans-serif; text-transform:uppercase;
+                        letter-spacing:0.08em; font-size:0.8rem; color:{ENCRE}; opacity:0.7;">
+                Total du devis, toutes taxes comprises
+            </div>
+            <div style="font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:2.5rem;
+                        color:{ORANGE_CHANTIER}; line-height:1.25;">
+                {montant_fmt}
+            </div>
+            {mention_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def cartouche(titre: str, sous_titre: str = "", reference: str | None = None):
     """Bandeau d'en-tete façon cartouche de plan technique : titre, sous-titre,
     et une bande de metadonnees reelles (date du jour, reference du document
