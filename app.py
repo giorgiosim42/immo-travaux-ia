@@ -12,7 +12,7 @@ from export_pdf import generer_pdf       # Assure-toi que cette fonction existe 
 from prompts import SYSTEM_PROMPT        # Assure-toi que SYSTEM_PROMPT est défini
 from db import init_db, get_all_artisans, get_indisponibilites
 from matching import trouver_artisans_correspondants
-from style import appliquer_style, cartouche
+from style import appliquer_style, cartouche, total_devis
 import plotly.express as px
 
 st.set_page_config(page_title="IA Immo - Estimation Travaux", page_icon="🏗️", layout="wide")
@@ -585,30 +585,34 @@ if st.session_state.get("analyse_effectuee"):
     st.markdown("---")
     st.markdown("### 💰 Récapitulatif Financier")
 
-    taux_tva = st.selectbox(
-        "Taux de TVA applicable",
-        options=list(TAUX_TVA_OPTIONS.keys()),
-        index=1,  # 10 % par défaut : cas le plus courant en rénovation
-        format_func=lambda x: TAUX_TVA_OPTIONS[x],
-        help="Taux indicatif. L'éligibilité aux taux réduits (5,5 % / 10 %) dépend de la nature exacte "
-             "des travaux et de l'ancienneté du logement (> 2 ans), et doit être confirmée par l'artisan "
-             "au moment de la facturation (attestation de TVA à signer par le client)."
-    )
+    col_taux, _ = st.columns([2, 1])  # colonne vide à droite : limite juste la largeur du sélecteur
+    with col_taux:
+        taux_tva = st.selectbox(
+            "Taux de TVA applicable",
+            options=list(TAUX_TVA_OPTIONS.keys()),
+            index=1,  # 10 % par défaut : cas le plus courant en rénovation
+            format_func=lambda x: TAUX_TVA_OPTIONS[x],
+            help="Taux indicatif. L'éligibilité aux taux réduits (5,5 % / 10 %) dépend de la nature exacte "
+                 "des travaux et de l'ancienneté du logement (> 2 ans), et doit être confirmée par l'artisan "
+                 "au moment de la facturation (attestation de TVA à signer par le client)."
+        )
     montant_tva = total_general_ht * (taux_tva / 100.0)
     total_general_ttc = total_general_ht + montant_tva
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Sous-total Travaux (HT)", f"{sous_total_ht:,.2f} €".replace(",", " "))
-    c2.metric("TOTAL ESTIMÉ (HT)", f"{total_general_ht:,.2f} €".replace(",", " "))
-    c3.metric("Prix au m² (HT)", f"{(total_general_ht / st.session_state.get('surface_piece', 15.0)):,.2f} €/m²".replace(",", " "))
+    # Un seul chiffre mis en avant pour le client : le total TTC.
+    total_devis(total_general_ttc, mention=f"dont TVA à {format_taux(taux_tva)} % : {montant_tva:,.2f} €".replace(",", " "))
 
-    c4, c5 = st.columns(2)
-    c4.metric(f"Montant TVA ({format_taux(taux_tva)} %)", f"{montant_tva:,.2f} €".replace(",", " "))
-    c5.metric("TOTAL ESTIMÉ (TTC)", f"{total_general_ttc:,.2f} €".replace(",", " "), delta="TVA incluse")
-    st.caption(
-        f"💡 Taux de TVA appliqué : {format_taux(taux_tva)} %. "
-        "Ce taux est indicatif et doit être confirmé par l'artisan au moment de la facturation."
-    )
+    # Le détail HT reste disponible mais en retrait (texte normal, replié par défaut)
+    # pour ne pas concurrencer visuellement le total TTC.
+    with st.expander("🔍 Voir le détail du calcul (HT, TVA, prix au m²)"):
+        d1, d2, d3 = st.columns(3)
+        d1.write(f"**Total HT**  \n{total_general_ht:,.2f} €".replace(",", " "))
+        d2.write(f"**TVA ({format_taux(taux_tva)} %)**  \n{montant_tva:,.2f} €".replace(",", " "))
+        d3.write(
+            f"**Prix au m² (HT)**  \n"
+            f"{(total_general_ht / st.session_state.get('surface_piece', 15.0)):,.2f} €/m²".replace(",", " ")
+        )
+        st.caption("Ce taux de TVA est indicatif et doit être confirmé par l'artisan au moment de la facturation.")
 
     # 5. Ventilation par corps de métier (sous-totaux + camembert)
     if sous_total_ht > 0:
@@ -719,3 +723,4 @@ if st.session_state.get("analyse_effectuee"):
             file_name="devis_estimation_travaux.pdf",
             mime="application/pdf"
         )
+
